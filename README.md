@@ -4,7 +4,7 @@
 
 Node Banana is node-based workflow application for generating images with NBP. Build image generation pipelines by connecting nodes on a visual canvas. Built mainly with Opus 4.5.
 
-![Node Banana Screenshot](/node-banana.png)
+![Node Banana Screenshot](public/node-banana.png)
 
 ## Features
 
