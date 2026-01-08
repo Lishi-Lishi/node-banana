@@ -52,13 +52,14 @@ Purpose: Draw/annotate on images before generation. Only use this if the user as
 Purpose: AI image generation using Gemini (REQUIRES both image AND text inputs). This is the primary node for image generation.
 - Inputs: "image" handle (accepts multiple connections), "text" handle (required)
 - Outputs: "image" handle
+- IMPORTANT: Always use "nano-banana-pro" model with "2K" resolution by default unless the user specifically requests otherwise.
 - Data structure:
   {
     "inputImages": [],
     "inputPrompt": null,
     "outputImage": null,
     "aspectRatio": "1:1",
-    "resolution": "1K",
+    "resolution": "2K",
     "model": "nano-banana-pro",
     "useGoogleSearch": false,
     "status": "idle",
@@ -344,7 +345,7 @@ Here is an example of a "Background Swap" workflow that combines a character wit
         "inputPrompt": null,
         "outputImage": null,
         "aspectRatio": "1:1",
-        "resolution": "1K",
+        "resolution": "2K",
         "model": "nano-banana-pro",
         "useGoogleSearch": false,
         "status": "idle",
