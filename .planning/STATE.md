@@ -5,34 +5,34 @@
 See: .planning/PROJECT.md (updated 2026-01-09)
 
 **Core value:** Provider infrastructure that dynamically discovers models from external APIs, enabling users to access hundreds of image/video generation models without hardcoding schemas.
-**Current focus:** Phase 2 - Model Discovery
+**Current focus:** Phase 3 - Generate Node Refactor
 
 ## Current Position
 
-Phase: 2 of 6 (Model Discovery)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-01-09 - Completed 02-02-PLAN.md (fal.ai provider)
+Phase: 3 of 6 (Generate Node Refactor)
+Plan: 0 of 3 in current phase
+Status: Ready to start Phase 3
+Last activity: 2026-01-09 - Completed 02-03-PLAN.md (Model caching)
 
-Progress: [==========================] 27% (4/15 plans)
+Progress: [=================================] 33% (5/15 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 6 min
-- Total execution time: 0.4 hours
+- Total execution time: 0.5 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Provider Infrastructure | 2/2 | 14 min | 7 min |
-| 2. Model Discovery | 2/3 | 9 min | 4.5 min |
+| 2. Model Discovery | 3/3 | 14 min | 4.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 12 min, 2 min, 4 min, 5 min
-- Trend: improving
+- Last 5 plans: 2 min, 4 min, 5 min, 5 min
+- Trend: stable
 
 ## Accumulated Context
 
@@ -51,6 +51,8 @@ Recent decisions affecting current work:
 - fal.ai API key optional (works without but rate limited)
 - fal.ai auth header: "Key {apiKey}" format (not Bearer)
 - fal.ai category maps directly to ModelCapability (no inference)
+- 10-minute cache TTL for model lists
+- Unified API at /api/models with header-based auth
 
 ### Deferred Issues
 
@@ -63,6 +65,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-09
-Stopped at: Completed 02-02-PLAN.md
+Stopped at: Completed Phase 2 (02-03-PLAN.md)
 Resume file: None
-Next action: Execute 02-03-PLAN.md (Model caching)
+Next action: Plan Phase 3 (03-01-PLAN.md - Rename NanoBanana to Generate)
