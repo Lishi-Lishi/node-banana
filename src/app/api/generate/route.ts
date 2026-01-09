@@ -425,6 +425,7 @@ async function generateWithFal(
   console.log(`[API:${requestId}] Generating with fal.ai...`);
   console.log(`[API:${requestId}]   - Model: ${input.model.id}`);
   console.log(`[API:${requestId}]   - Prompt length: ${input.prompt.length} chars`);
+  console.log(`[API:${requestId}]   - Images count: ${input.images?.length || 0}`);
   console.log(`[API:${requestId}]   - API key: ${apiKey ? "provided" : "not provided (using rate-limited access)"}`);
 
   const modelId = input.model.id;
@@ -434,6 +435,13 @@ async function generateWithFal(
     prompt: input.prompt,
     ...input.parameters,
   };
+
+  // Add image_url if provided (for img2img workflows)
+  // fal.ai accepts both URLs and data URIs in this field
+  if (input.images && input.images.length > 0) {
+    requestBody.image_url = input.images[0];
+    console.log(`[API:${requestId}] Added image_url to request (${input.images[0].substring(0, 50)}...)`);
+  }
 
   // Build headers
   const headers: Record<string, string> = {
