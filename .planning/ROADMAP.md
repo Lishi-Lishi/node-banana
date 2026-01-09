@@ -46,13 +46,13 @@ Plans:
 - [x] 02-03: Model caching and unified model interface
 
 ### Phase 3: Generate Node Refactor
-**Goal**: NanoBanana node becomes generic Generate node supporting any provider's model
+**Goal**: NanoBanana node becomes GenerateImage node supporting any provider's image models
 **Depends on**: Phase 2
 **Research**: Unlikely (internal refactoring using existing patterns)
-**Plans**: TBD
+**Design decision**: Separate nodes for image vs video generation (GenerateVideo added in Phase 6)
 
 Plans:
-- [ ] 03-01: Rename NanoBanana to Generate, add model selector
+- [ ] 03-01: Rename NanoBanana to GenerateImage, add model selector (image models only)
 - [ ] 03-02: Provider-specific execution in generate API route
 - [ ] 03-03: Backward compatibility for existing workflows
 
@@ -77,16 +77,17 @@ Plans:
 - [ ] 05-02: Integration with generate node for URL-based providers
 
 ### Phase 6: Video & Polish
-**Goal**: Video outputs play inline, custom parameters work, edge cases handled
+**Goal**: GenerateVideo node for video generation, video playback, custom parameters, edge cases
 **Depends on**: Phase 5
 **Research**: Likely (video handling)
 **Research topics**: HTML5 video element for base64/blob URLs, provider response formats for video content
-**Plans**: TBD
+**Design decision**: GenerateVideo as separate node type (not combined with GenerateImage)
 
 Plans:
-- [ ] 06-01: Video playback in output node
-- [ ] 06-02: Custom model parameters from provider schemas
-- [ ] 06-03: Edge case handling and final polish
+- [ ] 06-01: GenerateVideo node with video-capable model selector
+- [ ] 06-02: Video playback in output node
+- [ ] 06-03: Custom model parameters from provider schemas
+- [ ] 06-04: Edge case handling and final polish
 
 ## Progress
 
@@ -100,4 +101,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Generate Node Refactor | 0/3 | Not started | - |
 | 4. Model Search Dialog | 0/2 | Not started | - |
 | 5. Image URL Server | 0/2 | Not started | - |
-| 6. Video & Polish | 0/3 | Not started | - |
+| 6. Video & Polish | 0/4 | Not started | - |
