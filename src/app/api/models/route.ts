@@ -54,15 +54,6 @@ interface ReplicateModelsResponse {
   results: ReplicateModel[];
 }
 
-interface ReplicateSearchResponse {
-  next: string | null;
-  results: ReplicateSearchResult[];
-}
-
-interface ReplicateSearchResult {
-  model: ReplicateModel;
-}
-
 interface ReplicateModel {
   url: string;
   owner: string;
@@ -192,20 +183,11 @@ function mapReplicateModel(model: ReplicateModel): ProviderModel {
   };
 }
 
-async function fetchReplicateModels(
-  apiKey: string,
-  searchQuery?: string
-): Promise<ProviderModel[]> {
+async function fetchReplicateModels(apiKey: string): Promise<ProviderModel[]> {
   const allModels: ProviderModel[] = [];
-  let url: string | null;
-  let isSearchRequest = false;
 
-  if (searchQuery) {
-    url = `${REPLICATE_API_BASE}/search?query=${encodeURIComponent(searchQuery)}`;
-    isSearchRequest = true;
-  } else {
-    url = `${REPLICATE_API_BASE}/models`;
-  }
+  // Always fetch from the models endpoint - search endpoint is unreliable
+  let url: string | null = `${REPLICATE_API_BASE}/models`;
 
   // Paginate through results (limit to 15 pages to avoid timeout)
   let pageCount = 0;
@@ -222,23 +204,32 @@ async function fetchReplicateModels(
       throw new Error(`Replicate API error: ${response.status}`);
     }
 
-    if (isSearchRequest) {
-      const data: ReplicateSearchResponse = await response.json();
-      if (data.results) {
-        allModels.push(...data.results.map((result) => mapReplicateModel(result.model)));
-      }
-      url = data.next;
-    } else {
-      const data: ReplicateModelsResponse = await response.json();
-      if (data.results) {
-        allModels.push(...data.results.map(mapReplicateModel));
-      }
-      url = data.next;
+    const data: ReplicateModelsResponse = await response.json();
+    if (data.results) {
+      allModels.push(...data.results.map(mapReplicateModel));
     }
+    url = data.next;
     pageCount++;
   }
 
   return allModels;
+}
+
+/**
+ * Filter models by search query (client-side filtering for Replicate)
+ */
+function filterModelsBySearch(
+  models: ProviderModel[],
+  searchQuery: string
+): ProviderModel[] {
+  const searchLower = searchQuery.toLowerCase();
+  return models.filter((model) => {
+    const nameMatch = model.name.toLowerCase().includes(searchLower);
+    const descMatch =
+      model.description?.toLowerCase().includes(searchLower) || false;
+    const idMatch = model.id.toLowerCase().includes(searchLower);
+    return nameMatch || descMatch || idMatch;
+  });
 }
 
 // ============ Fal.ai Helpers ============
@@ -380,7 +371,12 @@ export async function GET(
 
   // Fetch from each provider
   for (const provider of providersToFetch) {
-    const cacheKey = getCacheKey(provider, searchQuery);
+    // For Replicate, always use base cache key since we filter client-side
+    // For fal.ai, include search in cache key since their API supports search
+    const cacheKey =
+      provider === "replicate"
+        ? getCacheKey(provider)
+        : getCacheKey(provider, searchQuery);
     let models: ProviderModel[] | null = null;
     let fromCache = false;
 
@@ -394,6 +390,14 @@ export async function GET(
         console.log(
           `[Models:${requestId}] ${provider}: Using cached models (${cached.length})`
         );
+
+        // For Replicate, apply client-side search filtering on cached models
+        if (provider === "replicate" && searchQuery) {
+          models = filterModelsBySearch(models, searchQuery);
+          console.log(
+            `[Models:${requestId}] ${provider}: Filtered to ${models.length} models for search "${searchQuery}"`
+          );
+        }
       }
     }
 
@@ -402,18 +406,32 @@ export async function GET(
       allFromCache = false;
       try {
         if (provider === "replicate") {
-          models = await fetchReplicateModels(replicateKey!, searchQuery);
+          // Fetch all models (no search param - we filter client-side)
+          const allReplicateModels = await fetchReplicateModels(replicateKey!);
+          // Cache the full list
+          setCachedModels(cacheKey, allReplicateModels);
+          console.log(
+            `[Models:${requestId}] ${provider}: Fetched ${allReplicateModels.length} models from API`
+          );
+          // Apply search filter if needed
+          models = searchQuery
+            ? filterModelsBySearch(allReplicateModels, searchQuery)
+            : allReplicateModels;
+          if (searchQuery) {
+            console.log(
+              `[Models:${requestId}] ${provider}: Filtered to ${models.length} models for search "${searchQuery}"`
+            );
+          }
         } else if (provider === "fal") {
           models = await fetchFalModels(falKey, searchQuery);
+          // Cache the results (fal.ai handles search server-side)
+          setCachedModels(cacheKey, models);
+          console.log(
+            `[Models:${requestId}] ${provider}: Fetched ${models.length} models from API`
+          );
         } else {
           models = [];
         }
-
-        // Store in cache
-        setCachedModels(cacheKey, models);
-        console.log(
-          `[Models:${requestId}] ${provider}: Fetched ${models.length} models from API`
-        );
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
