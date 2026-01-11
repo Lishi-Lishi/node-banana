@@ -360,7 +360,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
             )}
             {/* Error overlay when generation failed */}
             {nodeData.status === "error" && (
-              <div className="absolute inset-0 bg-red-900/70 rounded flex flex-col items-center justify-center gap-1">
+              <div className="absolute inset-0 bg-red-900/40 rounded flex flex-col items-center justify-center gap-1">
                 <svg
                   className="w-6 h-6 text-red-400"
                   fill="none"
