@@ -22,8 +22,6 @@ import {
   OutputNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
-  WorkflowSaveConfig,
-  WorkflowCostData,
   NodeGroup,
   GroupColor,
   ProviderType,
@@ -34,6 +32,20 @@ import { useToast } from "@/components/Toast";
 import { calculateGenerationCost } from "@/utils/costCalculator";
 import { logger } from "@/utils/logger";
 import { externalizeWorkflowImages, hydrateWorkflowImages } from "@/utils/imageStorage";
+import {
+  loadSaveConfigs,
+  saveSaveConfig,
+  loadWorkflowCostData,
+  saveWorkflowCostData,
+  loadGenerateImageDefaults,
+  saveGenerateImageDefaults,
+  getProviderSettings,
+  saveProviderSettings,
+  defaultProviderSettings,
+  generateWorkflowId,
+  // Re-export backward-compatible aliases
+  type GenerateImageDefaults,
+} from "./utils/localStorage";
 
 export type EdgeStyle = "angular" | "curved";
 
@@ -189,7 +201,7 @@ const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         prompt: "",
       } as PromptNodeData;
     case "nanoBanana": {
-      const defaults = loadNanoBananaDefaults();
+      const defaults = loadGenerateImageDefaults();
       const modelDisplayName = defaults.model === "nano-banana" ? "Nano Banana" : "Nano Banana Pro";
       const defaultSelectedModel: SelectedModel = {
         provider: "gemini",
@@ -277,133 +289,8 @@ const GROUP_COLOR_ORDER: GroupColor[] = [
   "neutral", "blue", "green", "purple", "orange", "red"
 ];
 
-// localStorage helpers for auto-save configs
-const STORAGE_KEY = "node-banana-workflow-configs";
-
-// localStorage helpers for cost tracking
-const COST_DATA_STORAGE_KEY = "node-banana-workflow-costs";
-
-const loadWorkflowCostData = (workflowId: string): WorkflowCostData | null => {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem(COST_DATA_STORAGE_KEY);
-  if (!stored) return null;
-  try {
-    const allCosts: Record<string, WorkflowCostData> = JSON.parse(stored);
-    return allCosts[workflowId] || null;
-  } catch {
-    return null;
-  }
-};
-
-const saveWorkflowCostData = (data: WorkflowCostData): void => {
-  if (typeof window === "undefined") return;
-  const stored = localStorage.getItem(COST_DATA_STORAGE_KEY);
-  let allCosts: Record<string, WorkflowCostData> = {};
-  if (stored) {
-    try {
-      allCosts = JSON.parse(stored);
-    } catch {
-      allCosts = {};
-    }
-  }
-  allCosts[data.workflowId] = data;
-  localStorage.setItem(COST_DATA_STORAGE_KEY, JSON.stringify(allCosts));
-};
-
-// localStorage helpers for GenerateImage sticky settings
-const GENERATE_IMAGE_DEFAULTS_KEY = "node-banana-nanoBanana-defaults";
-
-interface GenerateImageDefaults {
-  aspectRatio: string;
-  resolution: string;
-  model: string;
-  useGoogleSearch: boolean;
-}
-
-const loadGenerateImageDefaults = (): GenerateImageDefaults => {
-  if (typeof window === "undefined") {
-    return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-  }
-  const stored = localStorage.getItem(GENERATE_IMAGE_DEFAULTS_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-    }
-  }
-  return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-};
-
-export const saveGenerateImageDefaults = (settings: Partial<GenerateImageDefaults>) => {
-  if (typeof window === "undefined") return;
-  const current = loadGenerateImageDefaults();
-  const updated = { ...current, ...settings };
-  localStorage.setItem(GENERATE_IMAGE_DEFAULTS_KEY, JSON.stringify(updated));
-};
-
-/**
- * @deprecated Backward-compatible aliases. Use `GenerateImageDefaults` and `saveGenerateImageDefaults` instead.
- */
-type NanoBananaDefaults = GenerateImageDefaults;
-const loadNanoBananaDefaults = loadGenerateImageDefaults;
-/** @deprecated Use `saveGenerateImageDefaults` instead */
-export const saveNanoBananaDefaults = saveGenerateImageDefaults;
-
-// localStorage helpers for provider settings
-const PROVIDER_SETTINGS_KEY = "node-banana-provider-settings";
-
-const defaultProviderSettings: ProviderSettings = {
-  providers: {
-    gemini: { id: "gemini", name: "Google Gemini", enabled: true, apiKey: null, apiKeyEnvVar: "GEMINI_API_KEY" },
-    openai: { id: "openai", name: "OpenAI", enabled: true, apiKey: null, apiKeyEnvVar: "OPENAI_API_KEY" },
-    replicate: { id: "replicate", name: "Replicate", enabled: false, apiKey: null, apiKeyEnvVar: "REPLICATE_API_KEY" },
-    fal: { id: "fal", name: "fal.ai", enabled: false, apiKey: null, apiKeyEnvVar: "FAL_API_KEY" },
-  }
-};
-
-const getProviderSettings = (): ProviderSettings => {
-  if (typeof window === "undefined") return defaultProviderSettings;
-  const stored = localStorage.getItem(PROVIDER_SETTINGS_KEY);
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored) as ProviderSettings;
-      // Merge with defaults to handle new providers added after user saved settings
-      return {
-        providers: {
-          ...defaultProviderSettings.providers,
-          ...parsed.providers,
-        }
-      };
-    } catch {
-      return defaultProviderSettings;
-    }
-  }
-  return defaultProviderSettings;
-};
-
-const saveProviderSettings = (settings: ProviderSettings): void => {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(PROVIDER_SETTINGS_KEY, JSON.stringify(settings));
-};
-
-const generateWorkflowId = () =>
-  `wf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-const loadSaveConfigs = (): Record<string, WorkflowSaveConfig> => {
-  if (typeof window === "undefined") return {};
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored ? JSON.parse(stored) : {};
-};
-
-const saveSaveConfig = (config: WorkflowSaveConfig) => {
-  if (typeof window === "undefined") return;
-  const configs = loadSaveConfigs();
-  configs[config.workflowId] = config;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
-};
-
-export { generateWorkflowId };
+// Re-export for backward compatibility
+export { generateWorkflowId, saveGenerateImageDefaults, saveNanoBananaDefaults } from "./utils/localStorage";
 
 export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   nodes: [],
