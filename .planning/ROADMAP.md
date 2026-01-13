@@ -12,7 +12,7 @@ None
 
 - ✅ **v1.0 Multi-Provider Support** - Phases 1-6 (shipped 2026-01-11)
 - ✅ **v1.1 Improvements** - Phases 7-14 (shipped 2026-01-12)
-- 🚧 **v1.2 Improvements** - Phases 15-21 (in progress)
+- 🚧 **v1.2 Improvements** - Phases 15-22 (in progress)
 
 ## Phases
 
@@ -230,13 +230,17 @@ Plans:
 
 #### Phase 18: API Route Tests
 
-**Goal**: Add tests for generate, llm, and workflow API routes
+**Goal**: Add tests for generate, llm, models, and workflow API routes
 **Depends on**: Phase 17
 **Research**: Unlikely (Next.js API route testing patterns)
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 18-01: TBD (run /gsd:plan-phase 18 to break down)
+- [ ] 18-01: File I/O routes (workflow, save-generation)
+- [ ] 18-02: LLM route (Google, OpenAI providers)
+- [ ] 18-03: Generate route (Gemini provider)
+- [ ] 18-04: Generate route (Replicate, fal.ai providers)
+- [ ] 18-05: Models route (caching, aggregation)
 
 #### Phase 19: Type Refactoring
 
@@ -274,10 +278,27 @@ Plans:
 Plans:
 - [ ] 21-01: TBD (run /gsd:plan-phase 21 to break down)
 
+#### Phase 22: Generate Node Dynamic Input Tests
+
+**Goal**: Test that generate nodes properly validate and render dynamic inputs from provider schemas, and that all inputs/parameters are correctly included in API calls
+**Depends on**: Phase 21
+**Research**: Unlikely (existing test patterns from Phase 17)
+**Plans**: TBD
+
+**Test coverage:**
+1. Dynamic inputs from provider schemas render correctly as parameters and input handles on node creation
+2. Validation of dynamic inputs (required fields, type checking, constraints)
+3. Standard inputs (image, text) validate properly
+4. On submission, all parameters and inputs are included in API call payload correctly
+5. Coverage across all providers (Gemini, Replicate, fal.ai)
+
+Plans:
+- [ ] 22-01: TBD (run /gsd:plan-phase 22 to break down)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21
+Phases execute in numeric order: 1 → 2 → ... → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -302,3 +323,4 @@ Phases execute in numeric order: 1 → 2 → ... → 14 → 15 → 16 → 17 →
 | 19. Type Refactoring | v1.2 | 0/? | Not started | - |
 | 20. Integration Tests | v1.2 | 0/? | Not started | - |
 | 21. Fix Image Input & Deduplication | v1.2 | 0/? | Not started | - |
+| 22. Generate Node Dynamic Input Tests | v1.2 | 0/? | Not started | - |
