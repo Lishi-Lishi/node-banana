@@ -21,6 +21,8 @@ interface BaseNodeProps {
   className?: string;
   minWidth?: number;
   minHeight?: number;
+  headerAction?: ReactNode;
+  titlePrefix?: ReactNode;
 }
 
 export function BaseNode({
@@ -39,6 +41,8 @@ export function BaseNode({
   className = "",
   minWidth = 180,
   minHeight = 100,
+  headerAction,
+  titlePrefix,
 }: BaseNodeProps) {
   const currentNodeId = useWorkflowStore((state) => state.currentNodeId);
   const groups = useWorkflowStore((state) => state.groups);
@@ -198,7 +202,8 @@ export function BaseNode({
       >
         <div className="px-3 pt-2 pb-1 flex items-center justify-between">
           {/* Title Section */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+            {titlePrefix}
             {isEditingTitle ? (
               <input
                 ref={titleInputRef}
@@ -212,13 +217,14 @@ export function BaseNode({
               />
             ) : (
               <span
-                className="nodrag text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate inline-block max-w-full"
+                className="nodrag text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate"
                 onClick={() => setIsEditingTitle(true)}
                 title="Click to edit title"
               >
                 {customTitle ? `${customTitle} - ${title}` : title}
               </span>
             )}
+            {headerAction}
           </div>
 
           {/* Lock Badge for nodes in locked groups */}

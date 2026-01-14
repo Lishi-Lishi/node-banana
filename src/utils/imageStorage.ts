@@ -1,5 +1,14 @@
 import { WorkflowNode, WorkflowNodeData } from "@/types";
 import { WorkflowFile } from "@/store/workflowStore";
+import crypto from "crypto";
+
+/**
+ * Compute MD5 hash of image content for deduplication
+ * Consistent with save-generation API (Phase 13 decision)
+ */
+function computeContentHash(data: string): string {
+  return crypto.createHash("md5").update(data).digest("hex");
+}
 
 /**
  * Generate a unique image ID for external storage
@@ -203,12 +212,9 @@ async function saveImageAndGetId(
   savedImageIds: Map<string, string>,
   folder: "inputs" | "generations" = "inputs"
 ): Promise<string> {
-  // Create a hash using length + samples from different parts of the data
-  // This avoids issues where all images of the same format have identical headers
+  // Use MD5 hash for reliable deduplication (consistent with save-generation API, Phase 13 decision)
   // Include folder in hash so same image in different folders gets different IDs
-  const len = imageData.length;
-  const mid = Math.floor(len / 2);
-  const hash = `${folder}-${len}-${imageData.substring(50, 100)}-${imageData.substring(mid, mid + 50)}-${imageData.substring(Math.max(0, len - 50))}`;
+  const hash = `${folder}-${computeContentHash(imageData)}`;
 
   if (savedImageIds.has(hash)) {
     return savedImageIds.get(hash)!;

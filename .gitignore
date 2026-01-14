@@ -42,3 +42,6 @@ logs/*.json
 
 # .claude
 .claude/
+
+# planning docs
+.planning/

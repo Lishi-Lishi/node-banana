@@ -3,7 +3,25 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
 
-// POST: Load a generated image from the generations folder by ID
+// Supported file extensions
+const SUPPORTED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov'];
+
+// Video extensions
+const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov'];
+
+// Extension to MIME type mapping
+const EXT_TO_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+};
+
+// POST: Load a generated image or video from the generations folder by ID
 export async function POST(request: NextRequest) {
   let directoryPath: string | undefined;
   let imageId: string | undefined;
@@ -50,40 +68,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Construct file path (ID is the filename without extension)
-    const filename = `${imageId}.png`;
-    const filePath = path.join(directoryPath, filename);
+    // Find the file by ID with any supported extension
+    let foundExtension: string | null = null;
+    let filePath: string | null = null;
 
-    // Check if file exists
-    try {
-      await fs.access(filePath);
-    } catch {
+    for (const ext of SUPPORTED_EXTENSIONS) {
+      const candidatePath = path.join(directoryPath, `${imageId}.${ext}`);
+      try {
+        await fs.access(candidatePath);
+        foundExtension = ext;
+        filePath = candidatePath;
+        break;
+      } catch {
+        // File doesn't exist with this extension, continue
+      }
+    }
+
+    if (!foundExtension || !filePath) {
       logger.warn('file.error', 'Generation load failed: file not found', {
-        filePath,
+        imageId,
+        directoryPath,
       });
       return NextResponse.json(
-        { success: false, error: "Image file not found" },
+        { success: false, error: "File not found" },
         { status: 404 }
       );
     }
 
-    // Read the image file
+    // Read the file
     const buffer = await fs.readFile(filePath);
 
     // Convert to base64 data URL
+    const mimeType = EXT_TO_MIME[foundExtension] || 'application/octet-stream';
     const base64 = buffer.toString("base64");
-    const dataUrl = `data:image/png;base64,${base64}`;
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+
+    // Determine content type
+    const isVideo = VIDEO_EXTENSIONS.includes(foundExtension);
+    const contentType = isVideo ? 'video' : 'image';
 
     logger.info('file.load', 'Generation loaded successfully', {
       filePath,
-      filename,
+      extension: foundExtension,
+      contentType,
       fileSize: buffer.length,
     });
 
-    return NextResponse.json({
+    // Return appropriate response field based on content type
+    const response: Record<string, unknown> = {
       success: true,
-      image: dataUrl,
-    });
+      contentType,
+    };
+
+    if (isVideo) {
+      response.video = dataUrl;
+    } else {
+      response.image = dataUrl;
+    }
+
+    return NextResponse.json(response);
   } catch (error) {
     logger.error('file.error', 'Failed to load generation', {
       directoryPath,

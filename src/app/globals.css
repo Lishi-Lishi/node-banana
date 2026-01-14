@@ -75,6 +75,12 @@ body {
   background: #3b82f6;
 }
 
+/* CSS variables for handle colors (used by labels) */
+:root {
+  --handle-color-image: #10b981;
+  --handle-color-text: #a3a3a3;
+}
+
 .react-flow__edge-path {
   stroke: #94a3b8;
   stroke-width: 3;

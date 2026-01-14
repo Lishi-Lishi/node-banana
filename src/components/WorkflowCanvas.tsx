@@ -21,7 +21,8 @@ import {
   ImageInputNode,
   AnnotationNode,
   PromptNode,
-  NanoBananaNode,
+  GenerateImageNode,
+  GenerateVideoNode,
   LLMGenerateNode,
   SplitGridNode,
   OutputNode,
@@ -41,7 +42,8 @@ const nodeTypes: NodeTypes = {
   imageInput: ImageInputNode,
   annotation: AnnotationNode,
   prompt: PromptNode,
-  nanoBanana: NanoBananaNode,
+  nanoBanana: GenerateImageNode,
+  generateVideo: GenerateVideoNode,
   llmGenerate: LLMGenerateNode,
   splitGrid: SplitGridNode,
   output: OutputNode,
@@ -55,35 +57,19 @@ const edgeTypes: EdgeTypes = {
 // Connection validation rules
 // - Image handles (green) can only connect to image handles
 // - Text handles (blue) can only connect to text handles
-// - NanoBanana image input accepts multiple connections
-// - All other inputs accept only one connection
-const isValidConnection = (connection: Edge | Connection): boolean => {
-  const sourceHandle = connection.sourceHandle;
-  const targetHandle = connection.targetHandle;
-
-  // Strict type matching: image <-> image, text <-> text
-  if (sourceHandle === "image" && targetHandle !== "image") {
-    logger.warn('connection.validation', 'Connection validation failed: type mismatch', {
-      source: connection.source,
-      target: connection.target,
-      sourceHandle,
-      targetHandle,
-      reason: 'Cannot connect image handle to non-image handle',
-    });
-    return false;
-  }
-  if (sourceHandle === "text" && targetHandle !== "text") {
-    logger.warn('connection.validation', 'Connection validation failed: type mismatch', {
-      source: connection.source,
-      target: connection.target,
-      sourceHandle,
-      targetHandle,
-      reason: 'Cannot connect text handle to non-text handle',
-    });
-    return false;
-  }
-
-  return true;
+// - Video handles can only connect to generateVideo or output nodes
+// Helper to determine handle type from handle ID
+// For dynamic handles, we use naming convention: image inputs contain "image", text inputs are "prompt" or "negative_prompt"
+const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | null => {
+  if (!handleId) return null;
+  // Standard handles
+  if (handleId === "video") return "video";
+  if (handleId === "image" || handleId === "text") return handleId;
+  // Dynamic handles - check naming patterns
+  if (handleId.includes("video")) return "video";
+  if (handleId.includes("image") || handleId.includes("frame")) return "image";
+  if (handleId === "prompt" || handleId === "negative_prompt" || handleId.includes("prompt")) return "text";
+  return null;
 };
 
 // Define which handles each node type has
@@ -97,6 +83,8 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: [], outputs: ["text"] };
     case "nanoBanana":
       return { inputs: ["image", "text"], outputs: ["image"] };
+    case "generateVideo":
+      return { inputs: ["image", "text"], outputs: ["video"] };
     case "llmGenerate":
       return { inputs: ["text", "image"], outputs: ["text"] };
     case "splitGrid":
@@ -111,7 +99,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
 interface ConnectionDropState {
   position: { x: number; y: number };
   flowPosition: { x: number; y: number };
-  handleType: "image" | "text" | null;
+  handleType: "image" | "text" | "video" | null;
   connectionType: "source" | "target";
   sourceNodeId: string | null;
   sourceHandleId: string | null;
@@ -242,6 +230,41 @@ export function WorkflowCanvas() {
     [groups, nodes, setNodeGroupId]
   );
 
+  // Connection validation - checks if a connection is valid based on handle types and node types
+  // Defined inside component to have access to nodes array for video validation
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge): boolean => {
+      const sourceType = getHandleType(connection.sourceHandle);
+      const targetType = getHandleType(connection.targetHandle);
+
+      // If we can't determine types, allow the connection
+      if (!sourceType || !targetType) return true;
+
+      // Video connections have special rules
+      if (sourceType === "video") {
+        // Video source can ONLY connect to:
+        // 1. generateVideo nodes (for video-to-video)
+        // 2. output nodes (for display)
+        const targetNode = nodes.find((n) => n.id === connection.target);
+        if (!targetNode) return false;
+
+        const targetNodeType = targetNode.type;
+        if (targetNodeType === "generateVideo" || targetNodeType === "output") {
+          // For output node, we allow video even though its handle is typed as "image"
+          // because output node can display both images and videos
+          return true;
+        }
+        // Video cannot connect to other node types
+        return false;
+      }
+
+      // Standard type matching for image and text
+      // Image handles connect to image handles, text handles connect to text handles
+      return sourceType === targetType;
+    },
+    [nodes]
+  );
+
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!isValidConnection(connection)) return;
@@ -297,8 +320,52 @@ export function WorkflowCanvas() {
 
       const { clientX, clientY } = event as MouseEvent;
       const fromHandleId = connectionState.fromHandle?.id || null;
-      const fromHandleType = (fromHandleId === "image" || fromHandleId === "text") ? fromHandleId : null;
+      const fromHandleType = getHandleType(fromHandleId); // Use getHandleType for dynamic handles
       const isFromSource = connectionState.fromHandle?.type === "source";
+
+      // Helper to find a compatible handle on a node by type
+      const findCompatibleHandle = (
+        node: Node,
+        handleType: "image" | "text" | "video",
+        needInput: boolean
+      ): string | null => {
+        // Check for dynamic inputSchema first
+        const nodeData = node.data as { inputSchema?: Array<{ name: string; type: string }> };
+        if (nodeData.inputSchema && nodeData.inputSchema.length > 0) {
+          if (needInput) {
+            // Find first input handle matching the type
+            // Count how many of this type exist to determine if we need indexed handle ID
+            const matchingInputs = nodeData.inputSchema.filter(i => i.type === handleType);
+            if (matchingInputs.length > 0) {
+              // Return normalized handle ID, not schema name
+              // Nodes use "image"/"text" for single inputs, "image-0"/"text-0" for multiple
+              return matchingInputs.length > 1 ? `${handleType}-0` : handleType;
+            }
+          }
+          // Output handle - check for video or image type
+          if (handleType === "video") return "video";
+          return handleType === "image" ? "image" : null;
+        }
+
+        // Fall back to static handles
+        const staticHandles = getNodeHandles(node.type || "");
+        const handleList = needInput ? staticHandles.inputs : staticHandles.outputs;
+
+        // First try exact match
+        if (handleList.includes(handleType)) return handleType;
+
+        // For video output connecting to output node, allow "image" input (output node accepts both)
+        if (handleType === "video" && needInput && node.type === "output") {
+          return "image";
+        }
+
+        // Then check each handle's type
+        for (const h of handleList) {
+          if (getHandleType(h) === handleType) return h;
+        }
+
+        return null;
+      };
 
       // Check if we dropped on a node by looking for node elements under the cursor
       const elementsUnderCursor = document.elementsFromPoint(clientX, clientY);
@@ -315,22 +382,12 @@ export function WorkflowCanvas() {
           const targetNode = nodes.find((n) => n.id === targetNodeId);
 
           if (targetNode) {
-            const targetHandles = getNodeHandles(targetNode.type || "");
-
             // Find a compatible handle on the target node
-            let compatibleHandle: string | null = null;
-
-            if (isFromSource) {
-              // Dragging from output, need an input on target that matches type
-              if (targetHandles.inputs.includes(fromHandleType)) {
-                compatibleHandle = fromHandleType;
-              }
-            } else {
-              // Dragging from input, need an output on target that matches type
-              if (targetHandles.outputs.includes(fromHandleType)) {
-                compatibleHandle = fromHandleType;
-              }
-            }
+            const compatibleHandle = findCompatibleHandle(
+              targetNode,
+              fromHandleType,
+              isFromSource // need input if dragging from output
+            );
 
             if (compatibleHandle) {
               // Create the connection
@@ -369,7 +426,7 @@ export function WorkflowCanvas() {
         sourceHandleId: fromHandleId,
       });
     },
-    [screenToFlowPosition, nodes, getNodeHandles, handleConnect]
+    [screenToFlowPosition, nodes, handleConnect]
   );
 
   // Handle the splitGrid action - uses automated grid detection
@@ -508,16 +565,21 @@ export function WorkflowCanvas() {
       let sourceHandleIdForNewNode: string | null = null;
 
       // Map handle type to the correct handle ID based on node type
+      // Note: New nodes start with default handles (image, text) before a model is selected
       if (handleType === "image") {
         if (nodeType === "annotation" || nodeType === "output" || nodeType === "splitGrid") {
           targetHandleId = "image";
-        } else if (nodeType === "nanoBanana") {
+          // annotation also has an image output
+          if (nodeType === "annotation") {
+            sourceHandleIdForNewNode = "image";
+          }
+        } else if (nodeType === "nanoBanana" || nodeType === "generateVideo") {
           targetHandleId = "image";
         } else if (nodeType === "imageInput") {
           sourceHandleIdForNewNode = "image";
         }
       } else if (handleType === "text") {
-        if (nodeType === "nanoBanana" || nodeType === "llmGenerate") {
+        if (nodeType === "nanoBanana" || nodeType === "generateVideo" || nodeType === "llmGenerate") {
           targetHandleId = "text";
           // llmGenerate also has a text output
           if (nodeType === "llmGenerate") {
@@ -592,74 +654,63 @@ export function WorkflowCanvas() {
     setConnectionDrop(null);
   }, []);
 
-  // Custom wheel handler for macOS trackpad support
-  const handleWheel = useCallback((event: React.WheelEvent) => {
-    // Check if scrolling over a scrollable element (e.g., textarea, scrollable div)
-    const target = event.target as HTMLElement;
-    const scrollableElement = findScrollableAncestor(target, event.deltaX, event.deltaY);
-
-    if (scrollableElement) {
-      // Let the element handle its own scroll - don't prevent default or manipulate viewport
-      return;
-    }
-
-    // Pinch gesture (ctrlKey) always zooms
-    if (event.ctrlKey) {
-      event.preventDefault();
-      if (event.deltaY < 0) zoomIn();
-      else zoomOut();
-      return;
-    }
-
-    // On macOS, differentiate trackpad from mouse
-    if (isMacOS) {
-      const nativeEvent = event.nativeEvent;
-      if (isMouseWheel(nativeEvent)) {
-        // Mouse wheel → zoom
-        event.preventDefault();
-        if (event.deltaY < 0) zoomIn();
-        else zoomOut();
-      } else {
-        // Trackpad scroll → pan
-        event.preventDefault();
-        const viewport = getViewport();
-        setViewport({
-          x: viewport.x - event.deltaX,
-          y: viewport.y - event.deltaY,
-          zoom: viewport.zoom,
-        });
-      }
-      return;
-    }
-
-    // Non-macOS: default zoom behavior
-    event.preventDefault();
-    if (event.deltaY < 0) zoomIn();
-    else zoomOut();
-  }, [zoomIn, zoomOut, getViewport, setViewport]);
-
   // Get copy/paste functions and clipboard from store
   const { copySelectedNodes, pasteNodes, clearClipboard, clipboard } = useWorkflowStore();
 
-  // Add non-passive wheel listener to prevent Chrome swipe navigation on macOS
+  // Add non-passive wheel listener to handle zoom/pan and prevent browser navigation
+  // This replaces the onWheel prop which is passive by default and can't preventDefault
   useEffect(() => {
-    const handleWheelCapture = (event: WheelEvent) => {
-      // Always preventDefault on horizontal wheel to block browser back/forward navigation
-      // But let the event propagate so React Flow and other handlers can still process it
-      if (event.deltaX !== 0) {
+    const wrapper = reactFlowWrapper.current;
+    if (!wrapper) return;
+
+    const handleWheelNonPassive = (event: WheelEvent) => {
+      // Skip if modal is open
+      if (isModalOpen) return;
+
+      // Check if scrolling over a scrollable element
+      const target = event.target as HTMLElement;
+      const scrollableElement = findScrollableAncestor(target, event.deltaX, event.deltaY);
+      if (scrollableElement) return;
+
+      // Pinch gesture (ctrlKey) always zooms
+      if (event.ctrlKey) {
         event.preventDefault();
+        if (event.deltaY < 0) zoomIn();
+        else zoomOut();
+        return;
       }
+
+      // On macOS, differentiate trackpad from mouse
+      if (isMacOS) {
+        if (isMouseWheel(event)) {
+          // Mouse wheel → zoom
+          event.preventDefault();
+          if (event.deltaY < 0) zoomIn();
+          else zoomOut();
+        } else {
+          // Trackpad scroll → pan (also prevent horizontal swipe navigation)
+          event.preventDefault();
+          const viewport = getViewport();
+          setViewport({
+            x: viewport.x - event.deltaX,
+            y: viewport.y - event.deltaY,
+            zoom: viewport.zoom,
+          });
+        }
+        return;
+      }
+
+      // Non-macOS: default zoom behavior
+      event.preventDefault();
+      if (event.deltaY < 0) zoomIn();
+      else zoomOut();
     };
 
-    // Add listener with passive: false and capture phase to catch events early
-    const wrapper = reactFlowWrapper.current;
-    if (wrapper && isMacOS) {
-      wrapper.addEventListener('wheel', handleWheelCapture, { passive: false, capture: true });
-      return () => {
-        wrapper.removeEventListener('wheel', handleWheelCapture, true);
-      };
-    }
-  }, []);
+    wrapper.addEventListener('wheel', handleWheelNonPassive, { passive: false });
+    return () => {
+      wrapper.removeEventListener('wheel', handleWheelNonPassive);
+    };
+  }, [isModalOpen, zoomIn, zoomOut, getViewport, setViewport]);
 
   // Keyboard shortcuts for copy/paste and stacking selected nodes
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -725,6 +776,7 @@ export function WorkflowCanvas() {
             annotation: { width: 300, height: 280 },
             prompt: { width: 320, height: 220 },
             nanoBanana: { width: 300, height: 300 },
+            generateVideo: { width: 300, height: 300 },
             llmGenerate: { width: 320, height: 360 },
             splitGrid: { width: 300, height: 320 },
             output: { width: 320, height: 320 },
@@ -1116,7 +1168,6 @@ export function WorkflowCanvas() {
         maxZoom={4}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         panActivationKeyCode={isModalOpen ? null : "Space"}
-        onWheel={isModalOpen ? undefined : handleWheel}
         nodesDraggable={!isModalOpen}
         nodesConnectable={!isModalOpen}
         elementsSelectable={!isModalOpen}
@@ -1144,6 +1195,8 @@ export function WorkflowCanvas() {
                 return "#f97316";
               case "nanoBanana":
                 return "#22c55e";
+              case "generateVideo":
+                return "#9333ea";
               case "llmGenerate":
                 return "#06b6d4";
               case "splitGrid":

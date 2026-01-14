@@ -1,20 +1,24 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 interface ToastState {
   message: string | null;
   type: "info" | "success" | "warning" | "error";
-  show: (message: string, type?: "info" | "success" | "warning" | "error") => void;
+  persistent: boolean;
+  details: string | null;
+  show: (message: string, type?: "info" | "success" | "warning" | "error", persistent?: boolean, details?: string | null) => void;
   hide: () => void;
 }
 
 export const useToast = create<ToastState>((set) => ({
   message: null,
   type: "info",
-  show: (message, type = "info") => set({ message, type }),
-  hide: () => set({ message: null }),
+  persistent: false,
+  details: null,
+  show: (message, type = "info", persistent = false, details = null) => set({ message, type, persistent, details }),
+  hide: () => set({ message: null, persistent: false, details: null }),
 }));
 
 const typeStyles = {
@@ -48,34 +52,59 @@ const typeIcons = {
 };
 
 export function Toast() {
-  const { message, type, hide } = useToast();
+  const { message, type, persistent, details, hide } = useToast();
+  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
-    if (message) {
+    // Reset expanded state when toast changes
+    setIsExpanded(false);
+  }, [message]);
+
+  useEffect(() => {
+    if (message && !persistent) {
       const timer = setTimeout(() => {
         hide();
       }, 4000);
       return () => clearTimeout(timer);
     }
-  }, [message, hide]);
+  }, [message, persistent, hide]);
 
   if (!message) return null;
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="fixed top-6 right-6 z-[200] animate-in fade-in slide-in-from-top-4 duration-300 max-w-md">
       <div
-        className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-xl ${typeStyles[type]}`}
+        className={`flex flex-col rounded-lg border shadow-xl ${typeStyles[type]}`}
       >
-        {typeIcons[type]}
-        <span className="text-sm font-medium">{message}</span>
-        <button
-          onClick={hide}
-          className="ml-2 p-1 rounded hover:bg-white/10 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-3 px-4 py-3">
+          {typeIcons[type]}
+          <span className="text-sm font-medium flex-1">{message}</span>
+          <button
+            onClick={hide}
+            className="p-1 rounded hover:bg-white/10 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        {details && (
+          <>
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="px-4 py-1 text-xs opacity-70 hover:opacity-100 transition-opacity text-left border-t border-white/10"
+            >
+              {isExpanded ? "Hide details" : "Show details"}
+            </button>
+            {isExpanded && (
+              <div className="px-4 pb-3">
+                <pre className="bg-black/30 rounded p-2 max-h-40 overflow-auto text-xs font-mono whitespace-pre-wrap break-words">
+                  {details}
+                </pre>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

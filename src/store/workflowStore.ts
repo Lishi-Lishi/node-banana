@@ -16,20 +16,39 @@ import {
   AnnotationNodeData,
   PromptNodeData,
   NanoBananaNodeData,
+  GenerateVideoNodeData,
   LLMGenerateNodeData,
   SplitGridNodeData,
-  OutputNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
-  WorkflowSaveConfig,
-  WorkflowCostData,
   NodeGroup,
   GroupColor,
+  ProviderType,
+  ProviderSettings,
+  RecentModel,
 } from "@/types";
 import { useToast } from "@/components/Toast";
 import { calculateGenerationCost } from "@/utils/costCalculator";
 import { logger } from "@/utils/logger";
 import { externalizeWorkflowImages, hydrateWorkflowImages } from "@/utils/imageStorage";
+import {
+  loadSaveConfigs,
+  saveSaveConfig,
+  loadWorkflowCostData,
+  saveWorkflowCostData,
+  getProviderSettings,
+  saveProviderSettings,
+  defaultProviderSettings,
+  getRecentModels,
+  saveRecentModels,
+  MAX_RECENT_MODELS,
+} from "./utils/localStorage";
+import {
+  createDefaultNodeData,
+  defaultNodeDimensions,
+  GROUP_COLORS,
+  GROUP_COLOR_ORDER,
+} from "./utils/nodeDefaults";
 
 export type EdgeStyle = "angular" | "curved";
 
@@ -61,7 +80,7 @@ interface WorkflowStore {
   setEdgeStyle: (style: EdgeStyle) => void;
 
   // Node operations
-  addNode: (type: NodeType, position: XYPosition) => string;
+  addNode: (type: NodeType, position: XYPosition, initialData?: Partial<WorkflowNodeData>) => string;
   updateNodeData: (nodeId: string, data: Partial<WorkflowNodeData>) => void;
   removeNode: (nodeId: string) => void;
   onNodesChange: (changes: NodeChange<WorkflowNode>[]) => void;
@@ -111,7 +130,7 @@ interface WorkflowStore {
 
   // Helpers
   getNodeById: (id: string) => WorkflowNode | undefined;
-  getConnectedInputs: (nodeId: string) => { images: string[]; text: string | null };
+  getConnectedInputs: (nodeId: string) => { images: string[]; text: string | null; dynamicInputs: Record<string, string> };
   validateWorkflow: () => { valid: boolean; errors: string[] };
 
   // Global Image History
@@ -149,179 +168,36 @@ interface WorkflowStore {
   resetIncurredCost: () => void;
   loadIncurredCost: (workflowId: string) => void;
   saveIncurredCost: () => void;
-}
 
-const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
-  switch (type) {
-    case "imageInput":
-      return {
-        image: null,
-        filename: null,
-        dimensions: null,
-      } as ImageInputNodeData;
-    case "annotation":
-      return {
-        sourceImage: null,
-        annotations: [],
-        outputImage: null,
-      } as AnnotationNodeData;
-    case "prompt":
-      return {
-        prompt: "",
-      } as PromptNodeData;
-    case "nanoBanana": {
-      const defaults = loadNanoBananaDefaults();
-      return {
-        inputImages: [],
-        inputPrompt: null,
-        outputImage: null,
-        aspectRatio: defaults.aspectRatio,
-        resolution: defaults.resolution,
-        model: defaults.model,
-        useGoogleSearch: defaults.useGoogleSearch,
-        status: "idle",
-        error: null,
-        imageHistory: [],
-        selectedHistoryIndex: 0,
-      } as NanoBananaNodeData;
-    }
-    case "llmGenerate":
-      return {
-        inputPrompt: null,
-        inputImages: [],
-        outputText: null,
-        provider: "google",
-        model: "gemini-3-flash-preview",
-        temperature: 0.7,
-        maxTokens: 8192,
-        status: "idle",
-        error: null,
-      } as LLMGenerateNodeData;
-    case "splitGrid":
-      return {
-        sourceImage: null,
-        targetCount: 6,
-        defaultPrompt: "",
-        generateSettings: {
-          aspectRatio: "1:1",
-          resolution: "1K",
-          model: "nano-banana-pro",
-          useGoogleSearch: false,
-        },
-        childNodeIds: [],
-        gridRows: 2,
-        gridCols: 3,
-        isConfigured: false,
-        status: "idle",
-        error: null,
-      } as SplitGridNodeData;
-    case "output":
-      return {
-        image: null,
-      } as OutputNodeData;
-  }
-};
+  // Provider settings state
+  providerSettings: ProviderSettings;
+
+  // Provider settings actions
+  updateProviderSettings: (settings: ProviderSettings) => void;
+  updateProviderApiKey: (providerId: ProviderType, apiKey: string | null) => void;
+  toggleProvider: (providerId: ProviderType, enabled: boolean) => void;
+
+  // Model search dialog state
+  modelSearchOpen: boolean;
+  modelSearchProvider: ProviderType | null;
+
+  // Model search dialog actions
+  setModelSearchOpen: (open: boolean, provider?: ProviderType | null) => void;
+
+  // Recent models state
+  recentModels: RecentModel[];
+
+  // Recent models actions
+  trackModelUsage: (model: { provider: ProviderType; modelId: string; displayName: string }) => void;
+}
 
 let nodeIdCounter = 0;
 let groupIdCounter = 0;
 let autoSaveIntervalId: ReturnType<typeof setInterval> | null = null;
 
-// Group color palette (dark mode tints)
-export const GROUP_COLORS: Record<GroupColor, string> = {
-  neutral: "#262626",
-  blue: "#1e3a5f",
-  green: "#1a3d2e",
-  purple: "#2d2458",
-  orange: "#3d2a1a",
-  red: "#3d1a1a",
-};
-
-const GROUP_COLOR_ORDER: GroupColor[] = [
-  "neutral", "blue", "green", "purple", "orange", "red"
-];
-
-// localStorage helpers for auto-save configs
-const STORAGE_KEY = "node-banana-workflow-configs";
-
-// localStorage helpers for cost tracking
-const COST_DATA_STORAGE_KEY = "node-banana-workflow-costs";
-
-const loadWorkflowCostData = (workflowId: string): WorkflowCostData | null => {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem(COST_DATA_STORAGE_KEY);
-  if (!stored) return null;
-  try {
-    const allCosts: Record<string, WorkflowCostData> = JSON.parse(stored);
-    return allCosts[workflowId] || null;
-  } catch {
-    return null;
-  }
-};
-
-const saveWorkflowCostData = (data: WorkflowCostData): void => {
-  if (typeof window === "undefined") return;
-  const stored = localStorage.getItem(COST_DATA_STORAGE_KEY);
-  let allCosts: Record<string, WorkflowCostData> = {};
-  if (stored) {
-    try {
-      allCosts = JSON.parse(stored);
-    } catch {
-      allCosts = {};
-    }
-  }
-  allCosts[data.workflowId] = data;
-  localStorage.setItem(COST_DATA_STORAGE_KEY, JSON.stringify(allCosts));
-};
-
-// localStorage helpers for NanoBanana sticky settings
-const NANO_BANANA_DEFAULTS_KEY = "node-banana-nanoBanana-defaults";
-
-interface NanoBananaDefaults {
-  aspectRatio: string;
-  resolution: string;
-  model: string;
-  useGoogleSearch: boolean;
-}
-
-const loadNanoBananaDefaults = (): NanoBananaDefaults => {
-  if (typeof window === "undefined") {
-    return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-  }
-  const stored = localStorage.getItem(NANO_BANANA_DEFAULTS_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-    }
-  }
-  return { aspectRatio: "1:1", resolution: "1K", model: "nano-banana-pro", useGoogleSearch: false };
-};
-
-export const saveNanoBananaDefaults = (settings: Partial<NanoBananaDefaults>) => {
-  if (typeof window === "undefined") return;
-  const current = loadNanoBananaDefaults();
-  const updated = { ...current, ...settings };
-  localStorage.setItem(NANO_BANANA_DEFAULTS_KEY, JSON.stringify(updated));
-};
-
-const generateWorkflowId = () =>
-  `wf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-const loadSaveConfigs = (): Record<string, WorkflowSaveConfig> => {
-  if (typeof window === "undefined") return {};
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored ? JSON.parse(stored) : {};
-};
-
-const saveSaveConfig = (config: WorkflowSaveConfig) => {
-  if (typeof window === "undefined") return;
-  const configs = loadSaveConfigs();
-  configs[config.workflowId] = config;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
-};
-
-export { generateWorkflowId };
+// Re-export for backward compatibility
+export { generateWorkflowId, saveGenerateImageDefaults, saveNanoBananaDefaults } from "./utils/localStorage";
+export { GROUP_COLORS } from "./utils/nodeDefaults";
 
 export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   nodes: [],
@@ -351,6 +227,16 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // Cost tracking initial state
   incurredCost: 0,
 
+  // Provider settings initial state
+  providerSettings: getProviderSettings(),
+
+  // Model search dialog initial state
+  modelSearchOpen: false,
+  modelSearchProvider: null,
+
+  // Recent models initial state
+  recentModels: getRecentModels(),
+
   setEdgeStyle: (style: EdgeStyle) => {
     set({ edgeStyle: style });
   },
@@ -373,27 +259,22 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ showQuickstart: show });
   },
 
-  addNode: (type: NodeType, position: XYPosition) => {
+  addNode: (type: NodeType, position: XYPosition, initialData?: Partial<WorkflowNodeData>) => {
     const id = `${type}-${++nodeIdCounter}`;
 
-    // Default dimensions based on node type
-    const defaultDimensions: Record<NodeType, { width: number; height: number }> = {
-      imageInput: { width: 300, height: 280 },
-      annotation: { width: 300, height: 280 },
-      prompt: { width: 320, height: 220 },
-      nanoBanana: { width: 300, height: 300 },
-      llmGenerate: { width: 320, height: 360 },
-      splitGrid: { width: 300, height: 320 },
-      output: { width: 320, height: 320 },
-    };
+    const { width, height } = defaultNodeDimensions[type];
 
-    const { width, height } = defaultDimensions[type];
+    // Merge default data with initialData if provided
+    const defaultData = createDefaultNodeData(type);
+    const nodeData = initialData
+      ? ({ ...defaultData, ...initialData } as WorkflowNodeData)
+      : defaultData;
 
     const newNode: WorkflowNode = {
       id,
       type,
       position,
-      data: createDefaultNodeData(type),
+      data: nodeData,
       style: { width, height },
     };
 
@@ -572,22 +453,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const nodesToGroup = nodes.filter((n) => nodeIds.includes(n.id));
     if (nodesToGroup.length === 0) return "";
 
-    // Default dimensions per node type
-    const defaultNodeDimensions: Record<string, { width: number; height: number }> = {
-      imageInput: { width: 300, height: 280 },
-      annotation: { width: 300, height: 280 },
-      prompt: { width: 320, height: 220 },
-      nanoBanana: { width: 300, height: 300 },
-      llmGenerate: { width: 320, height: 360 },
-      splitGrid: { width: 300, height: 320 },
-      output: { width: 320, height: 320 },
-    };
-
     // Calculate bounding box of selected nodes
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     nodesToGroup.forEach((node) => {
       // Use measured dimensions (actual rendered size) first, then style, then type-specific defaults
-      const defaults = defaultNodeDimensions[node.type] || { width: 300, height: 280 };
+      const defaults = defaultNodeDimensions[node.type as NodeType] || { width: 300, height: 280 };
       const width = node.measured?.width || (node.style?.width as number) || defaults.width;
       const height = node.measured?.height || (node.style?.height as number) || defaults.height;
 
@@ -730,6 +600,63 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const { edges, nodes } = get();
     const images: string[] = [];
     let text: string | null = null;
+    const dynamicInputs: Record<string, string> = {};
+
+    // Get the target node to check for inputSchema
+    const targetNode = nodes.find((n) => n.id === nodeId);
+    const inputSchema = (targetNode?.data as { inputSchema?: Array<{ name: string; type: string }> })?.inputSchema;
+
+    // Build mapping from normalized handle IDs to schema names if schema exists
+    // Handles use normalized IDs ("image", "image-0", "text", "text-0")
+    // but API needs schema names ("image_url", "first_frame", "prompt", etc.)
+    const handleToSchemaName: Record<string, string> = {};
+    if (inputSchema && inputSchema.length > 0) {
+      const imageInputs = inputSchema.filter(i => i.type === "image");
+      const textInputs = inputSchema.filter(i => i.type === "text");
+
+      // Map image handles to schema names
+      imageInputs.forEach((input, index) => {
+        const handleId = imageInputs.length > 1 ? `image-${index}` : "image";
+        handleToSchemaName[handleId] = input.name;
+      });
+
+      // Map text handles to schema names
+      textInputs.forEach((input, index) => {
+        const handleId = textInputs.length > 1 ? `text-${index}` : "text";
+        handleToSchemaName[handleId] = input.name;
+      });
+    }
+
+    // Helper to determine if a handle ID is an image type
+    const isImageHandle = (handleId: string | null | undefined): boolean => {
+      if (!handleId) return false;
+      return handleId === "image" || handleId.startsWith("image-") || handleId.includes("frame");
+    };
+
+    // Helper to determine if a handle ID is a text type
+    const isTextHandle = (handleId: string | null | undefined): boolean => {
+      if (!handleId) return false;
+      return handleId === "text" || handleId.startsWith("text-") || handleId.includes("prompt");
+    };
+
+    // Helper to extract output from source node
+    const getSourceOutput = (sourceNode: WorkflowNode): { type: "image" | "text" | "video"; value: string | null } => {
+      if (sourceNode.type === "imageInput") {
+        return { type: "image", value: (sourceNode.data as ImageInputNodeData).image };
+      } else if (sourceNode.type === "annotation") {
+        return { type: "image", value: (sourceNode.data as AnnotationNodeData).outputImage };
+      } else if (sourceNode.type === "nanoBanana") {
+        return { type: "image", value: (sourceNode.data as NanoBananaNodeData).outputImage };
+      } else if (sourceNode.type === "generateVideo") {
+        // Return video type - generateVideo and output nodes handle this appropriately
+        return { type: "video", value: (sourceNode.data as GenerateVideoNodeData).outputVideo };
+      } else if (sourceNode.type === "prompt") {
+        return { type: "text", value: (sourceNode.data as PromptNodeData).prompt };
+      } else if (sourceNode.type === "llmGenerate") {
+        return { type: "text", value: (sourceNode.data as LLMGenerateNodeData).outputText };
+      }
+      return { type: "image", value: null };
+    };
 
     edges
       .filter((edge) => edge.target === nodeId)
@@ -738,31 +665,25 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         if (!sourceNode) return;
 
         const handleId = edge.targetHandle;
+        const { value } = getSourceOutput(sourceNode);
 
-        if (handleId === "image" || !handleId) {
-          // Get image from source node - collect all connected images
-          if (sourceNode.type === "imageInput") {
-            const sourceImage = (sourceNode.data as ImageInputNodeData).image;
-            if (sourceImage) images.push(sourceImage);
-          } else if (sourceNode.type === "annotation") {
-            const sourceImage = (sourceNode.data as AnnotationNodeData).outputImage;
-            if (sourceImage) images.push(sourceImage);
-          } else if (sourceNode.type === "nanoBanana") {
-            const sourceImage = (sourceNode.data as NanoBananaNodeData).outputImage;
-            if (sourceImage) images.push(sourceImage);
-          }
+        if (!value) return;
+
+        // Map normalized handle ID to schema name for dynamicInputs
+        // This allows API to receive schema-specific parameter names
+        if (handleId && handleToSchemaName[handleId]) {
+          dynamicInputs[handleToSchemaName[handleId]] = value;
         }
 
-        if (handleId === "text") {
-          if (sourceNode.type === "prompt") {
-            text = (sourceNode.data as PromptNodeData).prompt;
-          } else if (sourceNode.type === "llmGenerate") {
-            text = (sourceNode.data as LLMGenerateNodeData).outputText;
-          }
+        // Also populate legacy arrays for backward compatibility
+        if (isImageHandle(handleId) || !handleId) {
+          images.push(value);
+        } else if (isTextHandle(handleId)) {
+          text = value;
         }
       });
 
-    return { images, text };
+    return { images, text, dynamicInputs };
   },
 
   validateWorkflow: () => {
@@ -951,9 +872,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             break;
 
           case "nanoBanana": {
-            const { images, text } = getConnectedInputs(node.id);
+            const { images, text, dynamicInputs } = getConnectedInputs(node.id);
 
-            if (!text) {
+            // For dynamic inputs, check if we have at least a prompt
+            const promptText = text || dynamicInputs.prompt || null;
+            if (!promptText) {
               logger.error('node.error', 'nanoBanana node missing text input', {
                 nodeId: node.id,
               });
@@ -968,37 +891,64 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
             updateNodeData(node.id, {
               inputImages: images,
-              inputPrompt: text,
+              inputPrompt: promptText,
               status: "loading",
               error: null,
             });
 
             try {
-              const nodeData = node.data as NanoBananaNodeData;
+              // Get fresh node data from store (not stale data from sorted array)
+              const freshNode = get().nodes.find((n) => n.id === node.id);
+              const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
+              const providerSettingsState = get().providerSettings;
 
               const requestPayload = {
                 images,
-                prompt: text,
+                prompt: promptText,
                 aspectRatio: nodeData.aspectRatio,
                 resolution: nodeData.resolution,
                 model: nodeData.model,
                 useGoogleSearch: nodeData.useGoogleSearch,
+                selectedModel: nodeData.selectedModel,
+                parameters: nodeData.parameters,
+                dynamicInputs,  // Pass dynamic inputs for schema-mapped connections
               };
 
-              logger.info('api.gemini', 'Calling Gemini API for image generation', {
+              // Build headers with API keys for providers
+              const headers: Record<string, string> = {
+                "Content-Type": "application/json",
+              };
+              const provider = nodeData.selectedModel?.provider || "gemini";
+              if (provider === "gemini") {
+                const geminiConfig = providerSettingsState.providers.gemini;
+                if (geminiConfig?.apiKey) {
+                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+                }
+              } else if (provider === "replicate") {
+                const replicateConfig = providerSettingsState.providers.replicate;
+                if (replicateConfig?.apiKey) {
+                  headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
+                }
+              } else if (provider === "fal") {
+                const falConfig = providerSettingsState.providers.fal;
+                if (falConfig?.apiKey) {
+                  headers["X-Fal-API-Key"] = falConfig.apiKey;
+                }
+              }
+
+              logger.info('node.execution', `Calling ${provider} API for image generation`, {
                 nodeId: node.id,
-                model: nodeData.model,
+                provider,
+                model: nodeData.selectedModel?.modelId || nodeData.model,
                 aspectRatio: nodeData.aspectRatio,
                 resolution: nodeData.resolution,
                 imageCount: images.length,
-                prompt: text,
+                prompt: promptText,
               });
 
               const response = await fetch("/api/generate", {
                 method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
+                headers,
                 body: JSON.stringify(requestPayload),
               });
 
@@ -1012,8 +962,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                   if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
                 }
 
-                logger.error('api.error', 'Gemini API request failed', {
+                logger.error('api.error', `${provider} API request failed`, {
                   nodeId: node.id,
+                  provider,
                   status: response.status,
                   statusText: response.statusText,
                   errorMessage,
@@ -1038,7 +989,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 get().addToGlobalHistory({
                   image: result.image,
                   timestamp,
-                  prompt: text,
+                  prompt: promptText,
                   aspectRatio: nodeData.aspectRatio,
                   model: nodeData.model,
                 });
@@ -1047,7 +998,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 const newHistoryItem = {
                   id: imageId,
                   timestamp,
-                  prompt: text,
+                  prompt: promptText,
                   aspectRatio: nodeData.aspectRatio,
                   model: nodeData.model,
                 };
@@ -1082,8 +1033,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                   });
                 }
               } else {
-                logger.error('api.error', 'Gemini API generation failed', {
+                logger.error('api.error', `${provider} API generation failed`, {
                   nodeId: node.id,
+                  provider,
                   error: result.error,
                 });
                 updateNodeData(node.id, {
@@ -1106,8 +1058,249 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 errorMessage = error.message;
               }
 
-              logger.error('node.error', 'nanoBanana node execution failed', {
+              const nodeData = node.data as NanoBananaNodeData;
+              const errorProvider = nodeData.selectedModel?.provider || "gemini";
+              logger.error('node.error', 'Generate node execution failed', {
                 nodeId: node.id,
+                provider: errorProvider,
+                errorMessage,
+              }, error instanceof Error ? error : undefined);
+
+              updateNodeData(node.id, {
+                status: "error",
+                error: errorMessage,
+              });
+              set({ isRunning: false, currentNodeId: null });
+              await logger.endSession();
+              return;
+            }
+            break;
+          }
+
+          case "generateVideo": {
+            const { images, text, dynamicInputs } = getConnectedInputs(node.id);
+
+            // For dynamic inputs, check if we have at least a prompt
+            const hasPrompt = text || dynamicInputs.prompt || dynamicInputs.negative_prompt;
+            if (!hasPrompt && images.length === 0) {
+              logger.error('node.error', 'generateVideo node missing inputs', {
+                nodeId: node.id,
+              });
+              updateNodeData(node.id, {
+                status: "error",
+                error: "Missing required inputs",
+              });
+              set({ isRunning: false, currentNodeId: null });
+              await logger.endSession();
+              return;
+            }
+
+            // Get fresh node data from store (not stale data from sorted array)
+            const freshVideoNode = get().nodes.find((n) => n.id === node.id);
+            const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
+
+            if (!nodeData.selectedModel?.modelId) {
+              logger.error('node.error', 'generateVideo node missing model selection', {
+                nodeId: node.id,
+              });
+              updateNodeData(node.id, {
+                status: "error",
+                error: "No model selected",
+              });
+              set({ isRunning: false, currentNodeId: null });
+              await logger.endSession();
+              return;
+            }
+
+            updateNodeData(node.id, {
+              inputImages: images,
+              inputPrompt: text,
+              status: "loading",
+              error: null,
+            });
+
+            try {
+              const providerSettingsState = get().providerSettings;
+
+              const requestPayload = {
+                images,
+                prompt: text,
+                selectedModel: nodeData.selectedModel,
+                parameters: nodeData.parameters,
+                dynamicInputs,  // Pass dynamic inputs for schema-mapped connections
+                mediaType: "video" as const,  // Signal to API to use queue for long-running video generation
+              };
+
+              // Build headers with API keys for providers
+              const headers: Record<string, string> = {
+                "Content-Type": "application/json",
+              };
+              const provider = nodeData.selectedModel.provider;
+              if (provider === "gemini") {
+                const geminiConfig = providerSettingsState.providers.gemini;
+                if (geminiConfig?.apiKey) {
+                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+                }
+              } else if (provider === "replicate") {
+                const replicateConfig = providerSettingsState.providers.replicate;
+                if (replicateConfig?.apiKey) {
+                  headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
+                }
+              } else if (provider === "fal") {
+                const falConfig = providerSettingsState.providers.fal;
+                if (falConfig?.apiKey) {
+                  headers["X-Fal-API-Key"] = falConfig.apiKey;
+                }
+              }
+              logger.info('node.execution', `Calling ${provider} API for video generation`, {
+                nodeId: node.id,
+                provider,
+                model: nodeData.selectedModel.modelId,
+                imageCount: images.length,
+                prompt: text,
+              });
+
+              const response = await fetch("/api/generate", {
+                method: "POST",
+                headers,
+                body: JSON.stringify(requestPayload),
+              });
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                  const errorJson = JSON.parse(errorText);
+                  errorMessage = errorJson.error || errorMessage;
+                } catch {
+                  if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
+                }
+
+                logger.error('api.error', `${provider} API request failed`, {
+                  nodeId: node.id,
+                  provider,
+                  status: response.status,
+                  statusText: response.statusText,
+                  errorMessage,
+                });
+
+                updateNodeData(node.id, {
+                  status: "error",
+                  error: errorMessage,
+                });
+                set({ isRunning: false, currentNodeId: null });
+                await logger.endSession();
+                return;
+              }
+
+              const result = await response.json();
+
+              // Handle video response (video or videoUrl field)
+              const videoData = result.video || result.videoUrl;
+              if (result.success && videoData) {
+                const timestamp = Date.now();
+                const videoId = `${timestamp}`;
+
+                // Add to node's video history
+                const newHistoryItem = {
+                  id: videoId,
+                  timestamp,
+                  prompt: text || '',
+                  model: nodeData.selectedModel?.modelId || '',
+                };
+                const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
+
+                updateNodeData(node.id, {
+                  outputVideo: videoData,
+                  status: "complete",
+                  error: null,
+                  videoHistory: updatedHistory,
+                  selectedVideoHistoryIndex: 0,
+                });
+
+                // Auto-save video to generations folder if configured
+                const genPath = get().generationsPath;
+                if (genPath) {
+                  fetch("/api/save-generation", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      directoryPath: genPath,
+                      video: videoData,
+                      prompt: text,
+                      imageId: videoId,
+                    }),
+                  }).catch((err) => {
+                    console.error("Failed to save video generation:", err);
+                  });
+                }
+              } else if (result.success && result.image) {
+                // Some models might return an image preview; treat as video for now
+                const timestamp = Date.now();
+                const videoId = `${timestamp}`;
+
+                // Add to node's video history
+                const newHistoryItem = {
+                  id: videoId,
+                  timestamp,
+                  prompt: text || '',
+                  model: nodeData.selectedModel?.modelId || '',
+                };
+                const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
+
+                updateNodeData(node.id, {
+                  outputVideo: result.image,
+                  status: "complete",
+                  error: null,
+                  videoHistory: updatedHistory,
+                  selectedVideoHistoryIndex: 0,
+                });
+
+                // Auto-save image preview to generations folder if configured
+                const genPath = get().generationsPath;
+                if (genPath) {
+                  fetch("/api/save-generation", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      directoryPath: genPath,
+                      image: result.image,
+                      prompt: text,
+                      imageId: videoId,
+                    }),
+                  }).catch((err) => {
+                    console.error("Failed to save video generation:", err);
+                  });
+                }
+              } else {
+                logger.error('api.error', `${provider} API video generation failed`, {
+                  nodeId: node.id,
+                  provider,
+                  error: result.error,
+                });
+                updateNodeData(node.id, {
+                  status: "error",
+                  error: result.error || "Video generation failed",
+                });
+                set({ isRunning: false, currentNodeId: null });
+                await logger.endSession();
+                return;
+              }
+            } catch (error) {
+              let errorMessage = "Video generation failed";
+              if (error instanceof DOMException && error.name === 'AbortError') {
+                errorMessage = "Request timed out. Video generation may take longer.";
+              } else if (error instanceof TypeError && error.message.includes('NetworkError')) {
+                errorMessage = "Network error. Check your connection and try again.";
+              } else if (error instanceof TypeError) {
+                errorMessage = `Network error: ${error.message}`;
+              } else if (error instanceof Error) {
+                errorMessage = error.message;
+              }
+
+              logger.error('node.error', 'GenerateVideo node execution failed', {
+                nodeId: node.id,
+                provider: nodeData.selectedModel?.provider,
                 errorMessage,
               }, error instanceof Error ? error : undefined);
 
@@ -1147,6 +1340,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
             try {
               const nodeData = node.data as LLMGenerateNodeData;
+              const providerSettingsState = get().providerSettings;
+
+              // Build headers with API keys for LLM providers
+              const headers: Record<string, string> = {
+                "Content-Type": "application/json",
+              };
+              if (nodeData.provider === "google") {
+                const geminiConfig = providerSettingsState.providers.gemini;
+                if (geminiConfig?.apiKey) {
+                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+                }
+              } else if (nodeData.provider === "openai") {
+                const openaiConfig = providerSettingsState.providers.openai;
+                if (openaiConfig?.apiKey) {
+                  headers["X-OpenAI-API-Key"] = openaiConfig.apiKey;
+                }
+              }
 
               logger.info('api.llm', 'Calling LLM API', {
                 nodeId: node.id,
@@ -1160,7 +1370,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
               const response = await fetch("/api/llm", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify({
                   prompt: text,
                   ...(images.length > 0 && { images }),
@@ -1308,9 +1518,27 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
           case "output": {
             const { images } = getConnectedInputs(node.id);
-            const image = images[0] || null;
-            if (image) {
-              updateNodeData(node.id, { image });
+            const content = images[0] || null;
+            if (content) {
+              // Detect if content is video (data URL or URL extension)
+              const isVideoContent =
+                content.startsWith("data:video/") ||
+                content.includes(".mp4") ||
+                content.includes(".webm");
+
+              if (isVideoContent) {
+                updateNodeData(node.id, {
+                  image: content,
+                  video: content,
+                  contentType: "video"
+                });
+              } else {
+                updateNodeData(node.id, {
+                  image: content,
+                  video: null,
+                  contentType: "image"
+                });
+              }
             }
             break;
           }
@@ -1383,16 +1611,21 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
     try {
       if (node.type === "nanoBanana") {
-        const nodeData = node.data as NanoBananaNodeData;
+        // Get fresh node data from store
+        const freshNode = get().nodes.find((n) => n.id === nodeId);
+        const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
+        const providerSettingsState = get().providerSettings;
+        const provider = nodeData.selectedModel?.provider || "gemini";
 
         // Always get fresh connected inputs first, fall back to stored inputs only if not connected
         const inputs = getConnectedInputs(nodeId);
-        let images = inputs.images.length > 0 ? inputs.images : nodeData.inputImages;
-        let text = inputs.text ?? nodeData.inputPrompt;
+        const images = inputs.images.length > 0 ? inputs.images : nodeData.inputImages;
+        const text = inputs.text ?? nodeData.inputPrompt;
 
         if (!text) {
-          logger.error('node.error', 'nanoBanana regeneration failed: missing text input', {
+          logger.error('node.error', 'Generate node regeneration failed: missing text input', {
             nodeId,
+            provider,
           });
           updateNodeData(nodeId, {
             status: "error",
@@ -1408,9 +1641,31 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           error: null,
         });
 
-        logger.info('api.gemini', 'Calling Gemini API for node regeneration', {
+        // Build headers with API keys for providers
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (provider === "gemini") {
+          const geminiConfig = providerSettingsState.providers.gemini;
+          if (geminiConfig?.apiKey) {
+            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+          }
+        } else if (provider === "replicate") {
+          const replicateConfig = providerSettingsState.providers.replicate;
+          if (replicateConfig?.apiKey) {
+            headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
+          }
+        } else if (provider === "fal") {
+          const falConfig = providerSettingsState.providers.fal;
+          if (falConfig?.apiKey) {
+            headers["X-Fal-API-Key"] = falConfig.apiKey;
+          }
+        }
+
+        logger.info('node.execution', `Calling ${provider} API for node regeneration`, {
           nodeId,
-          model: nodeData.model,
+          provider,
+          model: nodeData.selectedModel?.modelId || nodeData.model,
           aspectRatio: nodeData.aspectRatio,
           resolution: nodeData.resolution,
           imageCount: images.length,
@@ -1419,7 +1674,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
         const response = await fetch("/api/generate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             images,
             prompt: text,
@@ -1427,6 +1682,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             resolution: nodeData.resolution,
             model: nodeData.model,
             useGoogleSearch: nodeData.useGoogleSearch,
+            selectedModel: nodeData.selectedModel,
+            parameters: nodeData.parameters,
           }),
         });
 
@@ -1439,8 +1696,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           } catch {
             if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
           }
-          logger.error('api.error', 'Gemini API regeneration failed', {
+          logger.error('api.error', `${provider} API regeneration failed`, {
             nodeId,
+            provider,
             status: response.status,
             errorMessage,
           });
@@ -1535,6 +1793,24 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           error: null,
         });
 
+        const providerSettingsState = get().providerSettings;
+
+        // Build headers with API keys for LLM providers
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (nodeData.provider === "google") {
+          const geminiConfig = providerSettingsState.providers.gemini;
+          if (geminiConfig?.apiKey) {
+            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+          }
+        } else if (nodeData.provider === "openai") {
+          const openaiConfig = providerSettingsState.providers.openai;
+          if (openaiConfig?.apiKey) {
+            headers["X-OpenAI-API-Key"] = openaiConfig.apiKey;
+          }
+        }
+
         logger.info('api.llm', 'Calling LLM API for node regeneration', {
           nodeId,
           provider: nodeData.provider,
@@ -1547,7 +1823,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
         const response = await fetch("/api/llm", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             prompt: text,
             ...(images.length > 0 && { images }),
@@ -1593,6 +1869,199 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           updateNodeData(nodeId, {
             status: "error",
             error: result.error || "LLM generation failed",
+          });
+        }
+      } else if (node.type === "generateVideo") {
+        // Get fresh node data from store
+        const freshVideoNode = get().nodes.find((n) => n.id === nodeId);
+        const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
+        const providerSettingsState = get().providerSettings;
+
+        // Get fresh connected inputs
+        const { images: connectedImages, text: connectedText, dynamicInputs } = getConnectedInputs(nodeId);
+        const images = connectedImages.length > 0 ? connectedImages : nodeData.inputImages;
+        const text = connectedText ?? nodeData.inputPrompt;
+
+        if (!text) {
+          logger.error('node.error', 'generateVideo regeneration failed: missing text input', {
+            nodeId,
+          });
+          updateNodeData(nodeId, {
+            status: "error",
+            error: "Missing text input",
+          });
+          set({ isRunning: false, currentNodeId: null });
+          await logger.endSession();
+          return;
+        }
+
+        if (!nodeData.selectedModel?.modelId) {
+          logger.error('node.error', 'generateVideo regeneration failed: no model selected', {
+            nodeId,
+          });
+          updateNodeData(nodeId, {
+            status: "error",
+            error: "No model selected",
+          });
+          set({ isRunning: false, currentNodeId: null });
+          await logger.endSession();
+          return;
+        }
+
+        updateNodeData(nodeId, {
+          inputImages: images,
+          status: "loading",
+          error: null,
+        });
+
+        // Build headers with API keys for providers
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        const provider = nodeData.selectedModel.provider;
+        if (provider === "gemini") {
+          const geminiConfig = providerSettingsState.providers.gemini;
+          if (geminiConfig?.apiKey) {
+            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
+          }
+        } else if (provider === "replicate") {
+          const replicateConfig = providerSettingsState.providers.replicate;
+          if (replicateConfig?.apiKey) {
+            headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
+          }
+        } else if (provider === "fal") {
+          const falConfig = providerSettingsState.providers.fal;
+          if (falConfig?.apiKey) {
+            headers["X-Fal-API-Key"] = falConfig.apiKey;
+          }
+        }
+        logger.info('node.execution', `Calling ${provider} API for video regeneration`, {
+          nodeId,
+          provider,
+          model: nodeData.selectedModel.modelId,
+          imageCount: images.length,
+          prompt: text,
+        });
+
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            images,
+            prompt: text,
+            selectedModel: nodeData.selectedModel,
+            parameters: nodeData.parameters,
+            dynamicInputs,
+            mediaType: "video",  // Signal to API to use queue for long-running video generation
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          let errorMessage = `HTTP ${response.status}`;
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorMessage;
+          } catch {
+            if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
+          }
+          logger.error('api.error', `${provider} API video regeneration failed`, {
+            nodeId,
+            provider,
+            status: response.status,
+            errorMessage,
+          });
+          updateNodeData(nodeId, { status: "error", error: errorMessage });
+          set({ isRunning: false, currentNodeId: null });
+          await logger.endSession();
+          return;
+        }
+
+        const result = await response.json();
+        const videoData = result.video || result.videoUrl;
+        if (result.success && videoData) {
+          const timestamp = Date.now();
+          const videoId = `${timestamp}`;
+
+          // Add to node's video history
+          const newHistoryItem = {
+            id: videoId,
+            timestamp,
+            prompt: text || '',
+            model: nodeData.selectedModel?.modelId || '',
+          };
+          const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
+
+          updateNodeData(nodeId, {
+            outputVideo: videoData,
+            status: "complete",
+            error: null,
+            videoHistory: updatedHistory,
+            selectedVideoHistoryIndex: 0,
+          });
+
+          // Auto-save video to generations folder if configured
+          const genPath = get().generationsPath;
+          if (genPath) {
+            fetch("/api/save-generation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                directoryPath: genPath,
+                video: videoData,
+                prompt: text,
+                imageId: videoId,
+              }),
+            }).catch((err) => {
+              console.error("Failed to save video generation:", err);
+            });
+          }
+        } else if (result.success && result.image) {
+          const timestamp = Date.now();
+          const videoId = `${timestamp}`;
+
+          // Add to node's video history
+          const newHistoryItem = {
+            id: videoId,
+            timestamp,
+            prompt: text || '',
+            model: nodeData.selectedModel?.modelId || '',
+          };
+          const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
+
+          updateNodeData(nodeId, {
+            outputVideo: result.image,
+            status: "complete",
+            error: null,
+            videoHistory: updatedHistory,
+            selectedVideoHistoryIndex: 0,
+          });
+
+          // Auto-save image preview to generations folder if configured
+          const genPath = get().generationsPath;
+          if (genPath) {
+            fetch("/api/save-generation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                directoryPath: genPath,
+                image: result.image,
+                prompt: text,
+                imageId: videoId,
+              }),
+            }).catch((err) => {
+              console.error("Failed to save video generation:", err);
+            });
+          }
+        } else {
+          logger.error('api.error', `${provider} API video regeneration failed`, {
+            nodeId,
+            provider,
+            error: result.error,
+          });
+          updateNodeData(nodeId, {
+            status: "error",
+            error: result.error || "Video generation failed",
           });
         }
       } else if (node.type === "splitGrid") {
@@ -1779,6 +2248,28 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return max;
     }, 0);
     groupIdCounter = maxGroupId;
+
+    // Migrate legacy nanoBanana nodes: derive selectedModel from model field if missing
+    workflow.nodes = workflow.nodes.map((node) => {
+      if (node.type === "nanoBanana") {
+        const data = node.data as NanoBananaNodeData;
+        if (data.model && !data.selectedModel) {
+          const displayName = data.model === "nano-banana" ? "Nano Banana" : "Nano Banana Pro";
+          return {
+            ...node,
+            data: {
+              ...data,
+              selectedModel: {
+                provider: "gemini" as ProviderType,
+                modelId: data.model,
+                displayName,
+              },
+            },
+          };
+        }
+      }
+      return node;
+    }) as WorkflowNode[];
 
     // Look up saved config from localStorage (only if workflow has an ID)
     const configs = loadSaveConfigs();
@@ -2023,5 +2514,68 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       incurredCost,
       lastUpdated: Date.now(),
     });
+  },
+
+  // Provider settings actions
+  updateProviderSettings: (settings: ProviderSettings) => {
+    set({ providerSettings: settings });
+    saveProviderSettings(settings);
+  },
+
+  updateProviderApiKey: (providerId: ProviderType, apiKey: string | null) => {
+    const { providerSettings } = get();
+    const updated: ProviderSettings = {
+      providers: {
+        ...providerSettings.providers,
+        [providerId]: {
+          ...providerSettings.providers[providerId],
+          apiKey,
+        },
+      },
+    };
+    set({ providerSettings: updated });
+    saveProviderSettings(updated);
+  },
+
+  toggleProvider: (providerId: ProviderType, enabled: boolean) => {
+    const { providerSettings } = get();
+    const updated: ProviderSettings = {
+      providers: {
+        ...providerSettings.providers,
+        [providerId]: {
+          ...providerSettings.providers[providerId],
+          enabled,
+        },
+      },
+    };
+    set({ providerSettings: updated });
+    saveProviderSettings(updated);
+  },
+
+  // Model search dialog actions
+  setModelSearchOpen: (open: boolean, provider?: ProviderType | null) => {
+    set({
+      modelSearchOpen: open,
+      modelSearchProvider: provider ?? null,
+    });
+  },
+
+  trackModelUsage: (model: { provider: ProviderType; modelId: string; displayName: string }) => {
+    const current = get().recentModels;
+    // Remove existing entry for same modelId if present
+    const filtered = current.filter((m) => m.modelId !== model.modelId);
+    // Prepend new entry with current timestamp
+    const updated: RecentModel[] = [
+      {
+        provider: model.provider,
+        modelId: model.modelId,
+        displayName: model.displayName,
+        timestamp: Date.now(),
+      },
+      ...filtered,
+    ].slice(0, MAX_RECENT_MODELS);
+    // Save to localStorage and update state
+    saveRecentModels(updated);
+    set({ recentModels: updated });
   },
 }));

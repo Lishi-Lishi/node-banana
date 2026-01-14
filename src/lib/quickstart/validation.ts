@@ -16,6 +16,7 @@ const VALID_NODE_TYPES: NodeType[] = [
   "annotation",
   "prompt",
   "nanoBanana",
+  "generateVideo",
   "llmGenerate",
   "splitGrid",
   "output",
@@ -29,6 +30,7 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   annotation: { width: 300, height: 280 },
   prompt: { width: 320, height: 220 },
   nanoBanana: { width: 300, height: 300 },
+  generateVideo: { width: 300, height: 300 },
   llmGenerate: { width: 320, height: 360 },
   splitGrid: { width: 300, height: 320 },
   output: { width: 320, height: 320 },
@@ -216,6 +218,17 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         error: null,
         imageHistory: [],
         selectedHistoryIndex: 0,
+      };
+    case "generateVideo":
+      return {
+        inputImages: [],
+        inputPrompt: null,
+        outputVideo: null,
+        selectedModel: undefined,
+        status: "idle",
+        error: null,
+        videoHistory: [],
+        selectedVideoHistoryIndex: 0,
       };
     case "llmGenerate":
       return {
