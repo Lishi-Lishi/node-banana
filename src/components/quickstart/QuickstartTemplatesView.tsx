@@ -118,6 +118,11 @@ export function QuickstartTemplatesView({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Description */}
+        <p className="text-sm text-neutral-400">
+          Pre-built workflows to help you get started quickly. Select a template to load it into the canvas.
+        </p>
+
         {/* Quick Start Templates */}
         <div className="space-y-3">
           <h3 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
@@ -310,6 +315,20 @@ export function QuickstartTemplatesView({
               ))}
             </div>
           )}
+
+          {/* Discord CTA */}
+          <p className="text-xs text-neutral-500 mt-3">
+            Want to share your workflow?{" "}
+            <a
+              href="https://discord.com/invite/89Nr6EKkTf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-purple-400 hover:text-purple-300 underline"
+            >
+              Join our Discord
+            </a>{" "}
+            to submit it to the community templates.
+          </p>
         </div>
 
         {/* Error */}
