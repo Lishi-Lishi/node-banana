@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { WorkflowFile } from "@/store/workflowStore";
-import { getAllPresets, PRESET_TEMPLATES } from "@/lib/quickstart/templates";
+import { getAllPresets, PRESET_TEMPLATES, getTemplateContent } from "@/lib/quickstart/templates";
 import { QuickstartBackButton } from "./QuickstartBackButton";
 import { TemplateCard } from "./TemplateCard";
 import { CommunityWorkflowMeta, TemplateCategory, TemplateMetadata } from "@/types/quickstart";
@@ -67,6 +67,20 @@ export function TemplateExplorerView({
       };
     });
     return metadata;
+  }, []);
+
+  // Get preview images for each template (from the "full" content level)
+  const previewImages = useMemo(() => {
+    const images: Record<string, string[]> = {};
+    PRESET_TEMPLATES.forEach((template) => {
+      const content = getTemplateContent(template.id, "full");
+      if (content?.images) {
+        images[template.id] = Object.values(content.images).map((img) => img.url);
+      } else {
+        images[template.id] = [];
+      }
+    });
+    return images;
   }, []);
 
   // Filter presets based on search, category, and tags
@@ -261,7 +275,7 @@ export function TemplateExplorerView({
       {/* Content - Sidebar + Main Grid */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <div className="w-48 flex-shrink-0 border-r border-neutral-700 p-4 space-y-5 overflow-y-auto">
+        <div className="w-48 flex-shrink-0 bg-neutral-900/80 border-r border-neutral-700 p-4 space-y-5 overflow-y-auto">
           {/* Search Input */}
           <div className="relative">
             <svg
@@ -386,12 +400,13 @@ export function TemplateExplorerView({
               <h3 className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
                 Quick Start
               </h3>
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 {filteredPresets.map((preset) => (
                   <TemplateCard
                     key={preset.id}
                     template={preset}
                     nodeCount={presetMetadata[preset.id]?.nodeCount ?? 0}
+                    previewImages={previewImages[preset.id]}
                     isLoading={loadingWorkflowId === preset.id}
                     onClick={() => handlePresetSelect(preset.id)}
                     disabled={isLoading}
@@ -436,7 +451,7 @@ export function TemplateExplorerView({
                   </svg>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   {filteredCommunity.map((workflow) => (
                     <button
                       key={workflow.id}
@@ -447,7 +462,7 @@ export function TemplateExplorerView({
                         ${
                           loadingWorkflowId === workflow.id
                             ? "bg-purple-600/20 border-purple-500/50"
-                            : "bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/70"
+                            : "bg-neutral-900/50 border-neutral-700 hover:border-neutral-500 hover:bg-neutral-900/70"
                         }
                         ${isLoading && loadingWorkflowId !== workflow.id ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
                       `}
