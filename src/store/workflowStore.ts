@@ -1036,9 +1036,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                       prompt: text,
                       imageId,
                     }),
-                  }).catch((err) => {
-                    console.error("Failed to save generation:", err);
-                  });
+                  })
+                    .then((res) => res.json())
+                    .then((saveResult) => {
+                      // Update imageHistory with actual saved ID for carousel loading
+                      if (saveResult.success && saveResult.imageId && saveResult.imageId !== imageId) {
+                        const currentNode = get().nodes.find((n) => n.id === node.id);
+                        if (currentNode) {
+                          const currentData = currentNode.data as NanoBananaNodeData;
+                          const updatedHistory = [...(currentData.imageHistory || [])];
+                          const entryIndex = updatedHistory.findIndex((h) => h.id === imageId);
+                          if (entryIndex !== -1) {
+                            updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                            updateNodeData(node.id, { imageHistory: updatedHistory });
+                          }
+                        }
+                      }
+                    })
+                    .catch((err) => {
+                      console.error("Failed to save generation:", err);
+                    });
                 }
               } else {
                 logger.error('api.error', `${provider} API generation failed`, {
@@ -1238,9 +1255,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                       prompt: text,
                       imageId: videoId,
                     }),
-                  }).catch((err) => {
-                    console.error("Failed to save video generation:", err);
-                  });
+                  })
+                    .then((res) => res.json())
+                    .then((saveResult) => {
+                      // Update videoHistory with actual saved ID for carousel loading
+                      if (saveResult.success && saveResult.imageId && saveResult.imageId !== videoId) {
+                        const currentNode = get().nodes.find((n) => n.id === node.id);
+                        if (currentNode) {
+                          const currentData = currentNode.data as GenerateVideoNodeData;
+                          const updatedHistory = [...(currentData.videoHistory || [])];
+                          const entryIndex = updatedHistory.findIndex((h) => h.id === videoId);
+                          if (entryIndex !== -1) {
+                            updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                            updateNodeData(node.id, { videoHistory: updatedHistory });
+                          }
+                        }
+                      }
+                    })
+                    .catch((err) => {
+                      console.error("Failed to save video generation:", err);
+                    });
                 }
               } else if (result.success && result.image) {
                 // Some models might return an image preview; treat as video for now
@@ -1276,9 +1310,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                       prompt: text,
                       imageId: videoId,
                     }),
-                  }).catch((err) => {
-                    console.error("Failed to save video generation:", err);
-                  });
+                  })
+                    .then((res) => res.json())
+                    .then((saveResult) => {
+                      // Update videoHistory with actual saved ID for carousel loading
+                      if (saveResult.success && saveResult.imageId && saveResult.imageId !== videoId) {
+                        const currentNode = get().nodes.find((n) => n.id === node.id);
+                        if (currentNode) {
+                          const currentData = currentNode.data as GenerateVideoNodeData;
+                          const updatedHistory = [...(currentData.videoHistory || [])];
+                          const entryIndex = updatedHistory.findIndex((h) => h.id === videoId);
+                          if (entryIndex !== -1) {
+                            updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                            updateNodeData(node.id, { videoHistory: updatedHistory });
+                          }
+                        }
+                      }
+                    })
+                    .catch((err) => {
+                      console.error("Failed to save video generation:", err);
+                    });
                 }
               } else {
                 logger.error('api.error', `${provider} API video generation failed`, {
@@ -1765,9 +1816,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 prompt: text,
                 imageId,
               }),
-            }).catch((err) => {
-              console.error("Failed to save generation:", err);
-            });
+            })
+              .then((res) => res.json())
+              .then((saveResult) => {
+                // Update imageHistory with actual saved ID for carousel loading
+                if (saveResult.success && saveResult.imageId && saveResult.imageId !== imageId) {
+                  const currentNode = get().nodes.find((n) => n.id === nodeId);
+                  if (currentNode) {
+                    const currentData = currentNode.data as NanoBananaNodeData;
+                    const updatedHistory = [...(currentData.imageHistory || [])];
+                    const entryIndex = updatedHistory.findIndex((h) => h.id === imageId);
+                    if (entryIndex !== -1) {
+                      updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                      updateNodeData(nodeId, { imageHistory: updatedHistory });
+                    }
+                  }
+                }
+              })
+              .catch((err) => {
+                console.error("Failed to save generation:", err);
+              });
           }
         } else {
           updateNodeData(nodeId, {
@@ -2021,9 +2089,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 prompt: text,
                 imageId: videoId,
               }),
-            }).catch((err) => {
-              console.error("Failed to save video generation:", err);
-            });
+            })
+              .then((res) => res.json())
+              .then((saveResult) => {
+                // Update videoHistory with actual saved ID for carousel loading
+                if (saveResult.success && saveResult.imageId && saveResult.imageId !== videoId) {
+                  const currentNode = get().nodes.find((n) => n.id === nodeId);
+                  if (currentNode) {
+                    const currentData = currentNode.data as GenerateVideoNodeData;
+                    const updatedHistory = [...(currentData.videoHistory || [])];
+                    const entryIndex = updatedHistory.findIndex((h) => h.id === videoId);
+                    if (entryIndex !== -1) {
+                      updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                      updateNodeData(nodeId, { videoHistory: updatedHistory });
+                    }
+                  }
+                }
+              })
+              .catch((err) => {
+                console.error("Failed to save video generation:", err);
+              });
           }
         } else if (result.success && result.image) {
           const timestamp = Date.now();
@@ -2058,9 +2143,26 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
                 prompt: text,
                 imageId: videoId,
               }),
-            }).catch((err) => {
-              console.error("Failed to save video generation:", err);
-            });
+            })
+              .then((res) => res.json())
+              .then((saveResult) => {
+                // Update videoHistory with actual saved ID for carousel loading
+                if (saveResult.success && saveResult.imageId && saveResult.imageId !== videoId) {
+                  const currentNode = get().nodes.find((n) => n.id === nodeId);
+                  if (currentNode) {
+                    const currentData = currentNode.data as GenerateVideoNodeData;
+                    const updatedHistory = [...(currentData.videoHistory || [])];
+                    const entryIndex = updatedHistory.findIndex((h) => h.id === videoId);
+                    if (entryIndex !== -1) {
+                      updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
+                      updateNodeData(nodeId, { videoHistory: updatedHistory });
+                    }
+                  }
+                }
+              })
+              .catch((err) => {
+                console.error("Failed to save video generation:", err);
+              });
           }
         } else {
           logger.error('api.error', `${provider} API video regeneration failed`, {
