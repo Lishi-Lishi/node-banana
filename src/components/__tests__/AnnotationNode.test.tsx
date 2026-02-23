@@ -347,7 +347,9 @@ describe("AnnotationNode", () => {
 
       expect(mockUpdateNodeData).toHaveBeenCalledWith("test-annotation-1", {
         sourceImage: null,
+        sourceImageRef: undefined,
         outputImage: null,
+        outputImageRef: undefined,
         annotations: [],
       });
     });
@@ -412,7 +414,9 @@ describe("AnnotationNode", () => {
       await waitFor(() => {
         expect(mockUpdateNodeData).toHaveBeenCalledWith("test-annotation-1", {
           sourceImage: "data:image/png;base64,uploadedImage",
+          sourceImageRef: undefined,
           outputImage: null,
+          outputImageRef: undefined,
           annotations: [],
         });
       });

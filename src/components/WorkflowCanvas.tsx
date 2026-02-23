@@ -19,14 +19,18 @@ import "@xyflow/react/dist/style.css";
 
 import { useWorkflowStore, WorkflowFile } from "@/store/workflowStore";
 import { useToast } from "@/components/Toast";
+import dynamic from "next/dynamic";
 import {
   ImageInputNode,
   AudioInputNode,
   AnnotationNode,
   PromptNode,
+  ArrayNode,
   PromptConstructorNode,
   GenerateImageNode,
   GenerateVideoNode,
+  Generate3DNode,
+  GenerateAudioNode,
   LLMGenerateNode,
   SplitGridNode,
   OutputNode,
@@ -34,7 +38,12 @@ import {
   ImageCompareNode,
   VideoStitchNode,
   EaseCurveNode,
+  VideoTrimNode,
+  VideoFrameGrabNode,
 } from "./nodes";
+
+// Lazy-load GLBViewerNode to avoid bundling three.js for users who don't use 3D nodes
+const GLBViewerNode = dynamic(() => import("./nodes/GLBViewerNode").then(mod => ({ default: mod.GLBViewerNode })), { ssr: false });
 import { EditableEdge, ReferenceEdge } from "./edges";
 import { ConnectionDropMenu, MenuAction } from "./ConnectionDropMenu";
 import { MultiSelectToolbar } from "./MultiSelectToolbar";
@@ -56,9 +65,12 @@ const nodeTypes: NodeTypes = {
   audioInput: AudioInputNode,
   annotation: AnnotationNode,
   prompt: PromptNode,
+  array: ArrayNode,
   promptConstructor: PromptConstructorNode,
   nanoBanana: GenerateImageNode,
   generateVideo: GenerateVideoNode,
+  generate3d: Generate3DNode,
+  generateAudio: GenerateAudioNode,
   llmGenerate: LLMGenerateNode,
   splitGrid: SplitGridNode,
   output: OutputNode,
@@ -66,6 +78,9 @@ const nodeTypes: NodeTypes = {
   imageCompare: ImageCompareNode,
   videoStitch: VideoStitchNode,
   easeCurve: EaseCurveNode,
+  videoTrim: VideoTrimNode,
+  videoFrameGrab: VideoFrameGrabNode,
+  glbViewer: GLBViewerNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -79,10 +94,12 @@ const edgeTypes: EdgeTypes = {
 // - Video handles can only connect to generateVideo or output nodes
 // Helper to determine handle type from handle ID
 // For dynamic handles, we use naming convention: image inputs contain "image", text inputs are "prompt" or "negative_prompt"
-const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | "easeCurve" | null => {
+const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | "3d" | "easeCurve" | null => {
   if (!handleId) return null;
   // EaseCurve handles (must check before other types)
   if (handleId === "easeCurve") return "easeCurve";
+  // 3D handles
+  if (handleId === "3d") return "3d";
   // Standard handles
   if (handleId === "video") return "video";
   if (handleId === "audio" || handleId.startsWith("audio")) return "audio";
@@ -100,10 +117,12 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
     case "imageInput":
       return { inputs: ["reference"], outputs: ["image"] };
     case "audioInput":
-      return { inputs: [], outputs: ["audio"] };
+      return { inputs: ["audio"], outputs: ["audio"] };
     case "annotation":
       return { inputs: ["image"], outputs: ["image"] };
     case "prompt":
+      return { inputs: ["text"], outputs: ["text"] };
+    case "array":
       return { inputs: ["text"], outputs: ["text"] };
     case "promptConstructor":
       return { inputs: ["text"], outputs: ["text"] };
@@ -111,12 +130,16 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["image", "text"], outputs: ["image"] };
     case "generateVideo":
       return { inputs: ["image", "text"], outputs: ["video"] };
+    case "generate3d":
+      return { inputs: ["image", "text"], outputs: ["3d"] };
+    case "generateAudio":
+      return { inputs: ["text"], outputs: ["audio"] };
     case "llmGenerate":
       return { inputs: ["text", "image"], outputs: ["text"] };
     case "splitGrid":
       return { inputs: ["image"], outputs: ["reference"] };
     case "output":
-      return { inputs: ["image", "video"], outputs: [] };
+      return { inputs: ["image", "video", "audio"], outputs: [] };
     case "outputGallery":
       return { inputs: ["image"], outputs: [] };
     case "imageCompare":
@@ -125,6 +148,12 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["video", "audio"], outputs: ["video"] };
     case "easeCurve":
       return { inputs: ["video", "easeCurve"], outputs: ["video", "easeCurve"] };
+    case "videoTrim":
+      return { inputs: ["video"], outputs: ["video"] };
+    case "videoFrameGrab":
+      return { inputs: ["video"], outputs: ["image"] };
+    case "glbViewer":
+      return { inputs: ["3d"], outputs: ["image"] };
     default:
       return { inputs: [], outputs: [] };
   }
@@ -133,7 +162,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
 interface ConnectionDropState {
   position: { x: number; y: number };
   flowPosition: { x: number; y: number };
-  handleType: "image" | "text" | "video" | "audio" | "easeCurve" | null;
+  handleType: "image" | "text" | "video" | "audio" | "3d" | "easeCurve" | null;
   connectionType: "source" | "target";
   sourceNodeId: string | null;
   sourceHandleId: string | null;
@@ -210,7 +239,7 @@ const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: num
 };
 
 export function WorkflowCanvas() {
-  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget, captureSnapshot, applyEditOperations, setWorkflowMetadata } =
+  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget, captureSnapshot, applyEditOperations, setWorkflowMetadata, canvasNavigationSettings, setShortcutsDialogOpen } =
     useWorkflowStore();
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
@@ -315,7 +344,7 @@ export function WorkflowCanvas() {
         if (!targetNode) return false;
 
         const targetNodeType = targetNode.type;
-        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "output") {
+        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "output") {
           // For output node, we allow video even though its handle is typed as "image"
           // because output node can display both images and videos
           return true;
@@ -324,8 +353,17 @@ export function WorkflowCanvas() {
         return false;
       }
 
-      // Audio connections: audio handles can only connect to audio handles
+      // 3D connections: 3d handles can only connect to matching 3d handles
+      if (sourceType === "3d" || targetType === "3d") {
+        return sourceType === "3d" && targetType === "3d";
+      }
+
+      // Audio connections: audio handles connect to audio handles, plus output node
       if (sourceType === "audio" || targetType === "audio") {
+        if (sourceType === "audio") {
+          const targetNode = nodes.find((n) => n.id === connection.target);
+          if (targetNode?.type === "output") return true;
+        }
         return sourceType === "audio" && targetType === "audio";
       }
 
@@ -448,7 +486,7 @@ export function WorkflowCanvas() {
       // Helper to find a compatible handle on a node by type
       const findCompatibleHandle = (
         node: Node,
-        handleType: "image" | "text" | "video" | "audio" | "easeCurve",
+        handleType: "image" | "text" | "video" | "audio" | "3d" | "easeCurve",
         needInput: boolean,
         batchUsed?: Set<string>
       ): string | null => {
@@ -474,8 +512,9 @@ export function WorkflowCanvas() {
               return null;
             }
           }
-          // Output handle - check for video or image type
+          // Output handle - check for video, 3d, or image type
           if (handleType === "video") return "video";
+          if (handleType === "3d") return "3d";
           return handleType === "image" ? "image" : null;
         }
 
@@ -501,6 +540,11 @@ export function WorkflowCanvas() {
         // For video output connecting to output node, allow "image" input (output node accepts both)
         if (handleType === "video" && needInput && node.type === "output") {
           return "image";
+        }
+
+        // For audio output connecting to output node, use the "audio" input handle
+        if (handleType === "audio" && needInput && node.type === "output") {
+          return "audio";
         }
 
         // Then check each handle's type
@@ -789,14 +833,14 @@ export function WorkflowCanvas() {
           sourceHandleIdForNewNode = "image";
         }
       } else if (handleType === "text") {
-        if (nodeType === "nanoBanana" || nodeType === "generateVideo" || nodeType === "llmGenerate") {
+        if (nodeType === "nanoBanana" || nodeType === "generateVideo" || nodeType === "generateAudio" || nodeType === "llmGenerate") {
           targetHandleId = "text";
           // llmGenerate also has a text output
           if (nodeType === "llmGenerate") {
             sourceHandleIdForNewNode = "text";
           }
-        } else if (nodeType === "prompt" || nodeType === "promptConstructor") {
-          // prompt and promptConstructor can receive and output text
+        } else if (nodeType === "prompt" || nodeType === "promptConstructor" || nodeType === "array") {
+          // prompt, promptConstructor, and array can receive and output text
           targetHandleId = "text";
           sourceHandleIdForNewNode = "text";
         }
@@ -809,6 +853,14 @@ export function WorkflowCanvas() {
           // EaseCurve accepts video input and outputs video
           targetHandleId = "video";
           sourceHandleIdForNewNode = "video";
+        } else if (nodeType === "videoTrim") {
+          // VideoTrim accepts video input and outputs video
+          targetHandleId = "video";
+          sourceHandleIdForNewNode = "video";
+        } else if (nodeType === "videoFrameGrab") {
+          // VideoFrameGrab accepts video input and outputs image
+          targetHandleId = "video";
+          sourceHandleIdForNewNode = "image";
         } else if (nodeType === "generateVideo") {
           // GenerateVideo outputs video
           sourceHandleIdForNewNode = "video";
@@ -818,11 +870,24 @@ export function WorkflowCanvas() {
         }
       } else if (handleType === "audio") {
         if (nodeType === "audioInput") {
-          // AudioInput outputs audio
+          // Audio node: accepts audio input and outputs audio
+          targetHandleId = "audio";
+          sourceHandleIdForNewNode = "audio";
+        } else if (nodeType === "generateAudio") {
+          // GenerateAudio outputs audio (no audio input to wire to)
           sourceHandleIdForNewNode = "audio";
         } else if (nodeType === "videoStitch") {
           // VideoStitch accepts audio
           targetHandleId = "audio";
+        } else if (nodeType === "output") {
+          // Output accepts audio on its audio handle
+          targetHandleId = "audio";
+        }
+      } else if (handleType === "3d") {
+        if (nodeType === "glbViewer") {
+          targetHandleId = "3d";
+        } else if (nodeType === "nanoBanana") {
+          sourceHandleIdForNewNode = "3d";
         }
       } else if (handleType === "easeCurve") {
         if (nodeType === "easeCurve") {
@@ -932,8 +997,16 @@ export function WorkflowCanvas() {
       const scrollableElement = findScrollableAncestor(target, event.deltaX, event.deltaY);
       if (scrollableElement) return;
 
-      // Pinch gesture (ctrlKey) always zooms
-      if (event.ctrlKey) {
+      const { zoomMode } = canvasNavigationSettings;
+
+      // Check if zoom should be triggered based on settings
+      const shouldZoom =
+        zoomMode === "scroll" ||
+        (zoomMode === "altScroll" && event.altKey) ||
+        (zoomMode === "ctrlScroll" && (event.ctrlKey || event.metaKey));
+
+      // Pinch gesture (ctrlKey + trackpad) always zooms regardless of settings
+      if (event.ctrlKey && !event.altKey) {
         event.preventDefault();
         if (event.deltaY < 0) zoomIn();
         else zoomOut();
@@ -943,34 +1016,46 @@ export function WorkflowCanvas() {
       // On macOS, differentiate trackpad from mouse
       if (isMacOS) {
         if (isMouseWheel(event)) {
-          // Mouse wheel → zoom
-          event.preventDefault();
-          if (event.deltaY < 0) zoomIn();
-          else zoomOut();
+          // Mouse wheel → zoom if settings allow
+          if (shouldZoom) {
+            event.preventDefault();
+            if (event.deltaY < 0) zoomIn();
+            else zoomOut();
+          }
         } else {
-          // Trackpad scroll → pan (also prevent horizontal swipe navigation)
-          event.preventDefault();
-          const viewport = getViewport();
-          setViewport({
-            x: viewport.x - event.deltaX,
-            y: viewport.y - event.deltaY,
-            zoom: viewport.zoom,
-          });
+          // Trackpad scroll
+          if (shouldZoom) {
+            // Zoom
+            event.preventDefault();
+            if (event.deltaY < 0) zoomIn();
+            else zoomOut();
+          } else {
+            // Pan (also prevent horizontal swipe navigation)
+            event.preventDefault();
+            const viewport = getViewport();
+            setViewport({
+              x: viewport.x - event.deltaX,
+              y: viewport.y - event.deltaY,
+              zoom: viewport.zoom,
+            });
+          }
         }
         return;
       }
 
-      // Non-macOS: default zoom behavior
-      event.preventDefault();
-      if (event.deltaY < 0) zoomIn();
-      else zoomOut();
+      // Non-macOS
+      if (shouldZoom) {
+        event.preventDefault();
+        if (event.deltaY < 0) zoomIn();
+        else zoomOut();
+      }
     };
 
     wrapper.addEventListener('wheel', handleWheelNonPassive, { passive: false });
     return () => {
       wrapper.removeEventListener('wheel', handleWheelNonPassive);
     };
-  }, [isModalOpen, zoomIn, zoomOut, getViewport, setViewport]);
+  }, [isModalOpen, zoomIn, zoomOut, getViewport, setViewport, canvasNavigationSettings]);
 
   // Keyboard shortcuts for copy/paste and stacking selected nodes
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -979,6 +1064,13 @@ export function WorkflowCanvas() {
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLTextAreaElement
     ) {
+      return;
+    }
+
+    // Handle keyboard shortcuts dialog (? key)
+    if (event.key === "?" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      setShortcutsDialogOpen(true);
       return;
     }
 
@@ -1013,6 +1105,9 @@ export function WorkflowCanvas() {
           case "p":
             nodeType = "prompt";
             break;
+          case "r":
+            nodeType = "array";
+            break;
           case "i":
             nodeType = "imageInput";
             break;
@@ -1028,6 +1123,9 @@ export function WorkflowCanvas() {
           case "a":
             nodeType = "annotation";
             break;
+          case "t":
+            nodeType = "generateAudio";
+            break;
         }
 
         if (nodeType) {
@@ -1039,9 +1137,12 @@ export function WorkflowCanvas() {
             audioInput: { width: 300, height: 200 },
             annotation: { width: 300, height: 280 },
             prompt: { width: 320, height: 220 },
+            array: { width: 360, height: 360 },
             promptConstructor: { width: 340, height: 280 },
             nanoBanana: { width: 300, height: 300 },
             generateVideo: { width: 300, height: 300 },
+            generate3d: { width: 300, height: 300 },
+            generateAudio: { width: 300, height: 280 },
             llmGenerate: { width: 320, height: 360 },
             splitGrid: { width: 300, height: 320 },
             output: { width: 320, height: 320 },
@@ -1049,6 +1150,9 @@ export function WorkflowCanvas() {
             imageCompare: { width: 400, height: 360 },
             videoStitch: { width: 400, height: 280 },
             easeCurve: { width: 340, height: 480 },
+            videoTrim: { width: 360, height: 360 },
+            videoFrameGrab: { width: 320, height: 320 },
+            glbViewer: { width: 360, height: 380 },
           };
           const dims = defaultDimensions[nodeType];
           addNode(nodeType, { x: centerX - dims.width / 2, y: centerY - dims.height / 2 });
@@ -1089,6 +1193,7 @@ export function WorkflowCanvas() {
                     // Update the selected imageInput node with the pasted image
                     updateNodeData(selectedImageInputNode.id, {
                       image: dataUrl,
+                      imageRef: undefined,
                       filename: `pasted-${Date.now()}.png`,
                       dimensions: { width: img.width, height: img.height },
                     });
@@ -1225,7 +1330,7 @@ export function WorkflowCanvas() {
           ]);
         });
       }
-  }, [nodes, onNodesChange, copySelectedNodes, pasteNodes, clearClipboard, clipboard, getViewport, addNode, updateNodeData, executeWorkflow]);
+  }, [nodes, onNodesChange, copySelectedNodes, pasteNodes, clearClipboard, clipboard, getViewport, addNode, updateNodeData, executeWorkflow, setShortcutsDialogOpen]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
@@ -1546,8 +1651,28 @@ export function WorkflowCanvas() {
         fitView
         deleteKeyCode={["Backspace", "Delete"]}
         multiSelectionKeyCode="Shift"
-        selectionOnDrag={isMacOS && !isModalOpen}
-        panOnDrag={!isMacOS && !isModalOpen}
+        selectionOnDrag={
+          canvasNavigationSettings.selectionMode === "altDrag" || canvasNavigationSettings.selectionMode === "shiftDrag"
+            ? false
+            : canvasNavigationSettings.panMode === "always"
+            ? false
+            : isMacOS && !isModalOpen
+        }
+        selectionKeyCode={
+          isModalOpen ? null
+            : canvasNavigationSettings.selectionMode === "altDrag" ? "Alt"
+            : canvasNavigationSettings.selectionMode === "shiftDrag" ? "Shift"
+            : "Shift"
+        }
+        panOnDrag={
+          isModalOpen
+            ? false
+            : canvasNavigationSettings.panMode === "always"
+            ? true
+            : canvasNavigationSettings.panMode === "middleMouse"
+            ? [2]
+            : !isMacOS
+        }
         selectNodesOnDrag={false}
         nodeDragThreshold={5}
         zoomOnScroll={false}
@@ -1555,7 +1680,13 @@ export function WorkflowCanvas() {
         minZoom={0.1}
         maxZoom={4}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-        panActivationKeyCode={isModalOpen ? null : "Space"}
+        panActivationKeyCode={
+          isModalOpen
+            ? null
+            : canvasNavigationSettings.panMode === "space"
+            ? "Space"
+            : null
+        }
         nodesDraggable={!isModalOpen}
         nodesConnectable={!isModalOpen}
         elementsSelectable={!isModalOpen}
@@ -1583,12 +1714,18 @@ export function WorkflowCanvas() {
                 return "#8b5cf6";
               case "prompt":
                 return "#f97316";
+              case "array":
+                return "#a3e635";
               case "promptConstructor":
                 return "#f472b6";
               case "nanoBanana":
                 return "#22c55e";
               case "generateVideo":
                 return "#9333ea";
+              case "generate3d":
+                return "#fb923c";
+              case "generateAudio":
+                return "#d946ef"; // fuchsia-500 (audio/TTS)
               case "llmGenerate":
                 return "#06b6d4";
               case "splitGrid":
@@ -1603,6 +1740,12 @@ export function WorkflowCanvas() {
                 return "#f97316";
               case "easeCurve":
                 return "#bef264"; // lime-300 (easy-peasy-ease)
+              case "videoTrim":
+                return "#60a5fa"; // blue-400 (trim/cut)
+              case "videoFrameGrab":
+                return "#38bdf8"; // sky-400 (image from video)
+              case "glbViewer":
+                return "#0ea5e9"; // sky-500 (3D viewport)
               default:
                 return "#94a3b8";
             }

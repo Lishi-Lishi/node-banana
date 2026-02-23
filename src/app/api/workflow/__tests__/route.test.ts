@@ -183,21 +183,28 @@ describe("/api/workflow route", () => {
       expect(data.error).toBe("Path is not a directory");
     });
 
-    it("should reject non-existent directory", async () => {
-      mockStat.mockRejectedValue(new Error("ENOENT"));
+    it("should create non-existent directory and continue saving", async () => {
+      const mockWorkflow = { nodes: [], edges: [] };
+      mockStat.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+      mockMkdir.mockResolvedValue(undefined);
+      mockWriteFile.mockResolvedValue(undefined);
 
       const request = createMockPostRequest({
         directoryPath: "/nonexistent/dir",
         filename: "workflow",
-        workflow: { nodes: [], edges: [] },
+        workflow: mockWorkflow,
       });
 
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(400);
-      expect(data.success).toBe(false);
-      expect(data.error).toBe("Directory does not exist");
+      expect(data.success).toBe(true);
+      expect(mockMkdir).toHaveBeenCalledWith("/nonexistent/dir", { recursive: true });
+      expect(mockWriteFile).toHaveBeenCalledWith(
+        "/nonexistent/dir/workflow.json",
+        JSON.stringify(mockWorkflow, null, 2),
+        "utf-8"
+      );
     });
 
     it("should continue saving even if subfolder creation fails", async () => {

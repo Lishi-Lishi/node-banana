@@ -234,6 +234,7 @@ describe("ImageInputNode", () => {
       await waitFor(() => {
         expect(mockUpdateNodeData).toHaveBeenCalledWith("test-image-1", {
           image: "data:image/png;base64,test123",
+          imageRef: undefined,
           filename: "test.png",
           dimensions: { width: 1024, height: 768 },
         });
@@ -406,6 +407,7 @@ describe("ImageInputNode", () => {
 
       expect(mockUpdateNodeData).toHaveBeenCalledWith("test-image-1", {
         image: null,
+        imageRef: undefined,
         filename: null,
         dimensions: null,
       });

@@ -37,7 +37,9 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
         const base64 = event.target?.result as string;
         updateNodeData(id, {
           sourceImage: base64,
+          sourceImageRef: undefined,
           outputImage: null,
+          outputImageRef: undefined,
           annotations: [],
         });
       };
@@ -81,7 +83,9 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
   const handleRemove = useCallback(() => {
     updateNodeData(id, {
       sourceImage: null,
+      sourceImageRef: undefined,
       outputImage: null,
+      outputImageRef: undefined,
       annotations: [],
     });
   }, [id, updateNodeData]);

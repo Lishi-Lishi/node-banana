@@ -10,7 +10,15 @@ interface SplitGridSettingsModalProps {
   onClose: () => void;
 }
 
-const TARGET_COUNT_OPTIONS = [4, 5, 6, 8, 9, 10] as const;
+const LAYOUT_OPTIONS = [
+  { rows: 2, cols: 2 },
+  { rows: 1, cols: 5 },
+  { rows: 2, cols: 3 },
+  { rows: 3, cols: 2 },
+  { rows: 2, cols: 4 },
+  { rows: 3, cols: 3 },
+  { rows: 2, cols: 5 },
+] as const;
 
 const ASPECT_RATIOS: AspectRatio[] = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
 const RESOLUTIONS: Resolution[] = ["1K", "2K", "4K"];
@@ -19,17 +27,9 @@ const MODELS: { value: ModelType; label: string }[] = [
   { value: "nano-banana-pro", label: "Nano Banana Pro" },
 ];
 
-// Calculate grid dimensions from target count
-const getGridDimensions = (count: number): { rows: number; cols: number } => {
-  const grids: Record<number, { rows: number; cols: number }> = {
-    4: { rows: 2, cols: 2 },
-    5: { rows: 1, cols: 5 },  // 1x5 vertical strip (e.g., for A+ content)
-    6: { rows: 2, cols: 3 },
-    8: { rows: 2, cols: 4 },
-    9: { rows: 3, cols: 3 },
-    10: { rows: 2, cols: 5 },
-  };
-  return grids[count] || { rows: 2, cols: 3 };
+const findLayoutIndex = (rows: number, cols: number): number => {
+  const idx = LAYOUT_OPTIONS.findIndex(l => l.rows === rows && l.cols === cols);
+  return idx >= 0 ? idx : 2; // default to 2x3
 };
 
 export function SplitGridSettingsModal({
@@ -39,14 +39,17 @@ export function SplitGridSettingsModal({
 }: SplitGridSettingsModalProps) {
   const { updateNodeData, addNode, onConnect, addEdgeWithType, getNodeById } = useWorkflowStore();
 
-  const [targetCount, setTargetCount] = useState(nodeData.targetCount);
+  const [selectedLayoutIndex, setSelectedLayoutIndex] = useState(
+    findLayoutIndex(nodeData.gridRows, nodeData.gridCols)
+  );
   const [defaultPrompt, setDefaultPrompt] = useState(nodeData.defaultPrompt);
   const [aspectRatio, setAspectRatio] = useState(nodeData.generateSettings.aspectRatio);
   const [resolution, setResolution] = useState(nodeData.generateSettings.resolution);
   const [model, setModel] = useState(nodeData.generateSettings.model);
   const [useGoogleSearch, setUseGoogleSearch] = useState(nodeData.generateSettings.useGoogleSearch);
 
-  const { rows, cols } = getGridDimensions(targetCount);
+  const { rows, cols } = LAYOUT_OPTIONS[selectedLayoutIndex];
+  const targetCount = rows * cols;
   const isNanoBananaPro = model === "nano-banana-pro";
 
   const handleCreate = useCallback(() => {
@@ -162,8 +165,8 @@ export function SplitGridSettingsModal({
     onClose();
   }, [
     nodeId, targetCount, defaultPrompt, aspectRatio, resolution,
-    model, useGoogleSearch, rows, cols, getNodeById, addNode,
-    updateNodeData, onConnect, addEdgeWithType, onClose
+    model, useGoogleSearch, rows, cols, selectedLayoutIndex, getNodeById,
+    addNode, updateNodeData, onConnect, addEdgeWithType, onClose
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -175,7 +178,7 @@ export function SplitGridSettingsModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
       <div
-        className="bg-neutral-800 rounded-lg p-6 w-[520px] border border-neutral-700 shadow-xl"
+        className="bg-neutral-800 rounded-lg p-6 w-[600px] border border-neutral-700 shadow-xl"
         onKeyDown={handleKeyDown}
       >
         <h2 className="text-lg font-semibold text-neutral-100 mb-4">
@@ -183,20 +186,21 @@ export function SplitGridSettingsModal({
         </h2>
 
         <div className="space-y-4">
-          {/* Target count selector with visual preview */}
+          {/* Layout selector with visual preview */}
           <div>
             <label className="block text-sm text-neutral-400 mb-2">
-              Number of Images
+              Grid Layout
             </label>
             <div className="flex gap-2">
-              {TARGET_COUNT_OPTIONS.map((count) => {
-                const { rows: r, cols: c } = getGridDimensions(count);
+              {LAYOUT_OPTIONS.map((layout, index) => {
+                const count = layout.rows * layout.cols;
+                const isSelected = selectedLayoutIndex === index;
                 return (
                   <button
-                    key={count}
-                    onClick={() => setTargetCount(count)}
+                    key={`${layout.rows}x${layout.cols}`}
+                    onClick={() => setSelectedLayoutIndex(index)}
                     className={`flex-1 p-2 rounded border transition-colors ${
-                      targetCount === count
+                      isSelected
                         ? "border-blue-500 bg-blue-500/20"
                         : "border-neutral-600 hover:border-neutral-500"
                     }`}
@@ -204,20 +208,21 @@ export function SplitGridSettingsModal({
                     <div
                       className="aspect-video mx-auto w-12 grid gap-0.5"
                       style={{
-                        gridTemplateColumns: `repeat(${c}, 1fr)`,
-                        gridTemplateRows: `repeat(${r}, 1fr)`,
+                        gridTemplateColumns: `repeat(${layout.cols}, 1fr)`,
+                        gridTemplateRows: `repeat(${layout.rows}, 1fr)`,
                       }}
                     >
                       {Array.from({ length: count }).map((_, i) => (
                         <div
                           key={i}
                           className={`rounded-sm ${
-                            targetCount === count ? "bg-blue-400" : "bg-neutral-500"
+                            isSelected ? "bg-blue-400" : "bg-neutral-500"
                           }`}
                         />
                       ))}
                     </div>
-                    <div className="text-xs text-neutral-300 mt-1 text-center">{count}</div>
+                    <div className="text-xs text-neutral-300 mt-1 text-center">{layout.rows}x{layout.cols}</div>
+                    <div className="text-[10px] text-neutral-500 text-center">{count}</div>
                   </button>
                 );
               })}

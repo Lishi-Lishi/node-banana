@@ -4,15 +4,21 @@ import {
   AudioInputNodeData,
   AnnotationNodeData,
   PromptNodeData,
+  ArrayNodeData,
   PromptConstructorNodeData,
   NanoBananaNodeData,
   GenerateVideoNodeData,
+  Generate3DNodeData,
+  GenerateAudioNodeData,
   LLMGenerateNodeData,
   SplitGridNodeData,
   OutputNodeData,
   OutputGalleryNodeData,
   ImageCompareNodeData,
   EaseCurveNodeData,
+  VideoTrimNodeData,
+  VideoFrameGrabNodeData,
+  GLBViewerNodeData,
   WorkflowNodeData,
   GroupColor,
   SelectedModel,
@@ -28,9 +34,12 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   audioInput: { width: 300, height: 200 },
   annotation: { width: 300, height: 280 },
   prompt: { width: 320, height: 220 },
+  array: { width: 360, height: 360 },
   promptConstructor: { width: 340, height: 280 },
   nanoBanana: { width: 300, height: 300 },
   generateVideo: { width: 300, height: 300 },
+  generate3d: { width: 300, height: 300 },
+  generateAudio: { width: 300, height: 280 },
   llmGenerate: { width: 320, height: 360 },
   splitGrid: { width: 300, height: 320 },
   output: { width: 320, height: 320 },
@@ -38,6 +47,9 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   imageCompare: { width: 400, height: 360 },
   videoStitch: { width: 400, height: 280 },
   easeCurve: { width: 340, height: 480 },
+  videoTrim: { width: 360, height: 360 },
+  videoFrameGrab: { width: 320, height: 320 },
+  glbViewer: { width: 360, height: 380 },
 };
 
 /**
@@ -87,6 +99,19 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
       return {
         prompt: "",
       } as PromptNodeData;
+    case "array":
+      return {
+        inputText: null,
+        splitMode: "delimiter",
+        delimiter: "*",
+        regexPattern: "",
+        trimItems: true,
+        removeEmpty: true,
+        selectedOutputIndex: null,
+        outputItems: [],
+        outputText: "[]",
+        error: null,
+      } as ArrayNodeData;
     case "promptConstructor":
       return {
         template: "",
@@ -142,6 +167,33 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         videoHistory: [],
         selectedVideoHistoryIndex: 0,
       } as GenerateVideoNodeData;
+    }
+    case "generate3d": {
+      const nodeDefaults = loadNodeDefaults();
+      return {
+        inputImages: [],
+        inputPrompt: null,
+        output3dUrl: null,
+        savedFilename: null,
+        savedFilePath: null,
+        selectedModel: nodeDefaults.generate3d?.selectedModel,
+        status: "idle",
+        error: null,
+      } as Generate3DNodeData;
+    }
+    case "generateAudio": {
+      const nodeDefaults = loadNodeDefaults();
+      return {
+        inputPrompt: null,
+        outputAudio: null,
+        selectedModel: nodeDefaults.generateAudio?.selectedModel,
+        status: "idle",
+        error: null,
+        audioHistory: [],
+        selectedAudioHistoryIndex: 0,
+        duration: null,
+        format: null,
+      } as GenerateAudioNodeData;
     }
     case "llmGenerate": {
       const nodeDefaults = loadNodeDefaults();
@@ -213,5 +265,29 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         progress: 0,
         encoderSupported: null,
       } as EaseCurveNodeData;
+    case "videoTrim":
+      return {
+        startTime: 0,
+        endTime: 0,
+        duration: null,
+        outputVideo: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+        encoderSupported: null,
+      } as VideoTrimNodeData;
+    case "videoFrameGrab":
+      return {
+        framePosition: "first",
+        outputImage: null,
+        status: "idle",
+        error: null,
+      } as VideoFrameGrabNodeData;
+    case "glbViewer":
+      return {
+        glbUrl: null,
+        filename: null,
+        capturedImage: null,
+      } as GLBViewerNodeData;
   }
 };

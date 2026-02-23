@@ -323,7 +323,7 @@ export function AnnotationModal() {
   const handleDone = useCallback(() => {
     if (!sourceNodeId) return;
     const flattenedImage = flattenImage();
-    updateNodeData(sourceNodeId, { annotations, outputImage: flattenedImage });
+    updateNodeData(sourceNodeId, { annotations, outputImage: flattenedImage, outputImageRef: undefined });
     closeModal();
   }, [sourceNodeId, annotations, flattenImage, updateNodeData, closeModal]);
 

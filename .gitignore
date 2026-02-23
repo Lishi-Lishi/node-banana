@@ -45,3 +45,8 @@ logs/*.json
 
 # planning docs
 .planning/
+
+# agents
+.agents/
+
+.superset/

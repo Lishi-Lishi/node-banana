@@ -65,7 +65,7 @@ All application state lives in `workflowStore.ts` using Zustand. Key patterns:
 ## AI Models
 
 Image generation models (these exist and are recently released):
-- `gemini-2.5-flash-preview-image-generation` → internal name: `nano-banana`
+- `gemini-2.5-flash-image` → internal name: `nano-banana`
 - `gemini-3-pro-image-preview` → internal name: `nano-banana-pro`
 
 LLM models:
@@ -82,6 +82,9 @@ LLM models:
 | `nanoBanana` | AI image generation | image, text | image |
 | `llmGenerate` | AI text generation | text, image | text |
 | `splitGrid` | Split image into grid cells | image | reference |
+| `generateAudio` | AI audio/TTS generation | text | audio |
+| `audioInput` | Load/upload audio files | audio | audio |
+| `glbViewer` | Load/display 3D GLB models | none | image |
 | `output` | Display final result | image | none |
 
 ## Node Connection System
@@ -92,6 +95,7 @@ LLM models:
 |-------------|-------------|-------------|
 | `image` | Base64 data URL | Visual content |
 | `text` | String | Text content |
+| `audio` | Base64 data URL | Audio content |
 
 ### Connection Rules
 
@@ -112,6 +116,10 @@ Returns `{ images: string[], text: string | null }`.
 - `prompt` → `data.prompt`
 - `llmGenerate` → `data.outputText`
 
+**Audio data extracted from:**
+- `audioInput` → `data.audioFile`
+- `generateAudio` → `data.outputAudio`
+
 ## Keyboard Shortcuts
 
 - `Cmd/Ctrl + Enter` - Run workflow
@@ -122,9 +130,11 @@ Returns `{ images: string[], text: string | null }`.
 - `Shift + V` - Add video (generateVideo) node
 - `Shift + L` - Add LLM node
 - `Shift + A` - Add annotation node
+- `Shift + T` - Add audio (generateAudio) node
 - `H` - Stack selected nodes horizontally
 - `V` - Stack selected nodes vertically
 - `G` - Arrange selected nodes in grid
+- `?` - Show keyboard shortcuts
 
 ## Adding New Node Types
 
@@ -208,7 +218,16 @@ All routes in `src/app/api/`:
 - `node-banana-workflow-costs` - Cost tracking per workflow
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
 
-## Commits
+## Git Workflow
 
+- The primary development branch is `develop`, NOT `main` or `master`
+- Always checkout `develop` before creating feature branches: `git checkout develop`
+- Create feature branches from `develop` using: `feature/<short-description>` or `fix/<short-description>`
+- All PRs MUST target `develop`: use `gh pr create --base develop`
+- Never push directly to `main`, `master`, or `develop`
+
+## Commits
+- Commit after each logical task or unit of work is complete. When implementing a multi-task plan, commit after finishing each task — do NOT batch all tasks into a single commit at the end.
+- Each commit should be atomic and self-contained: one task = one commit.
 - The .planning directory is untracked, do not attempt to commit any changes to the files in this directory.
 

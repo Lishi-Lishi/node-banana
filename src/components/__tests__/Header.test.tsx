@@ -324,6 +324,7 @@ describe("Header", () => {
     });
   });
 
+
   describe("Settings Button", () => {
     it("should open ProjectSetupModal in 'settings' mode when settings button clicked", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {

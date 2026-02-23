@@ -441,4 +441,170 @@ describe("CostIndicator", () => {
       expect(screen.queryByTitle("View cost details")).not.toBeInTheDocument();
     });
   });
+
+  describe("Non-Gemini Provider Hiding", () => {
+    it("should not render when a nanoBanana node has a non-Gemini selectedModel", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          data: {
+            model: "nano-banana",
+            resolution: "1K",
+            selectedModel: {
+              provider: "fal",
+              modelId: "fal-ai/flux",
+              displayName: "Flux",
+            },
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.queryByTitle("View cost details")).not.toBeInTheDocument();
+    });
+
+    it("should not render when a generateVideo node has a non-Gemini selectedModel", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "generateVideo",
+          position: { x: 0, y: 0 },
+          data: {
+            selectedModel: {
+              provider: "kie",
+              modelId: "kling-video",
+              displayName: "Kling Video",
+            },
+            status: "idle",
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.queryByTitle("View cost details")).not.toBeInTheDocument();
+    });
+
+    it("should not render when a generate3d node has a non-Gemini selectedModel", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "generate3d",
+          position: { x: 0, y: 0 },
+          data: {
+            selectedModel: {
+              provider: "fal",
+              modelId: "fal-3d",
+              displayName: "Fal 3D",
+            },
+            status: "idle",
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.queryByTitle("View cost details")).not.toBeInTheDocument();
+    });
+
+    it("should render when a nanoBanana node has selectedModel with provider gemini", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          data: {
+            model: "nano-banana",
+            resolution: "1K",
+            selectedModel: {
+              provider: "gemini",
+              modelId: "nano-banana",
+              displayName: "Nano Banana",
+            },
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.getByTitle("View cost details")).toBeInTheDocument();
+    });
+
+    it("should render when a nanoBanana node has no selectedModel (legacy Gemini)", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          data: {
+            model: "nano-banana",
+            resolution: "1K",
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.getByTitle("View cost details")).toBeInTheDocument();
+    });
+
+    it("should not render when mix of Gemini and non-Gemini nodes exist", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          data: {
+            model: "nano-banana",
+            resolution: "1K",
+          },
+        },
+        {
+          id: "node-2",
+          type: "nanoBanana",
+          position: { x: 100, y: 0 },
+          data: {
+            model: "nano-banana",
+            resolution: "1K",
+            selectedModel: {
+              provider: "replicate",
+              modelId: "some-model",
+              displayName: "Some Model",
+            },
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      expect(screen.queryByTitle("View cost details")).not.toBeInTheDocument();
+    });
+  });
 });

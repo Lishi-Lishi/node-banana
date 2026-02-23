@@ -7,6 +7,7 @@ import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { VideoStitchNodeData } from "@/types";
 import { checkEncoderSupport } from "@/hooks/useStitchVideos";
+import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 
 type VideoStitchNodeType = Node<VideoStitchNodeData, "videoStitch">;
 
@@ -20,6 +21,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
+  const videoBlobUrl = useVideoBlobUrl(nodeData.outputVideo ?? null);
 
   // Check encoder support on mount
   useEffect(() => {
@@ -76,7 +78,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
       let videoData: string | null = null;
       let duration: number | null = null;
 
-      if (sourceNode.type === "generateVideo" || sourceNode.type === "easeCurve" || sourceNode.type === "videoStitch") {
+      if (sourceNode.type === "generateVideo" || sourceNode.type === "easeCurve" || sourceNode.type === "videoStitch" || sourceNode.type === "videoTrim") {
         videoData = (sourceNode.data as any).outputVideo || null;
       }
 
@@ -123,55 +125,81 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
 
   // Stable key that only changes when clip edges or video data actually change
   const clipKey = useMemo(
-    () => orderedClips.map((c) => `${c.edgeId}:${c.videoData ? "1" : "0"}`).join(","),
+    () => orderedClips.map((c) => `${c.edgeId}:${c.videoData ? c.videoData.slice(-20) : "0"}`).join(","),
     [orderedClips]
   );
 
   // Ref-based cache so the effect doesn't read stale `thumbnails` state
   const thumbnailsRef = useRef<Map<string, string>>(new Map());
+  // Fingerprint cache: edgeId -> last-20-chars of videoData, used to detect which clips changed
+  const thumbnailFingerprintsRef = useRef<Map<string, string>>(new Map());
 
   // Extract thumbnails from connected videos
   useEffect(() => {
     let cancelled = false;
 
+    const cleanupVideo = (video: HTMLVideoElement) => {
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      video.onseeked = null;
+      video.src = "";
+      video.load();
+    };
+
     const extractThumbnails = async () => {
       const newThumbnails = new Map<string, string>();
+      const newFingerprints = new Map<string, string>();
 
       for (const clip of orderedClips) {
         if (cancelled) return;
         if (!clip.videoData) continue;
-        if (thumbnailsRef.current.has(clip.edgeId)) {
+
+        const fingerprint = clip.videoData.slice(-20);
+        newFingerprints.set(clip.edgeId, fingerprint);
+
+        // Reuse cached thumbnail if the video data hasn't changed
+        const cachedFingerprint = thumbnailFingerprintsRef.current.get(clip.edgeId);
+        if (cachedFingerprint === fingerprint && thumbnailsRef.current.has(clip.edgeId)) {
           newThumbnails.set(clip.edgeId, thumbnailsRef.current.get(clip.edgeId)!);
           continue;
         }
 
+        const video = document.createElement("video");
         try {
-          const video = document.createElement("video");
           video.src = clip.videoData;
           video.crossOrigin = "anonymous";
           video.muted = true;
+          video.preload = "metadata";
 
           await new Promise<void>((resolve, reject) => {
             video.onloadedmetadata = () => resolve();
             video.onerror = () => reject(new Error("Failed to load video"));
           });
 
-          if (cancelled) return;
+          if (cancelled) { cleanupVideo(video); return; }
 
           const seekTime = video.duration * 0.25;
           video.currentTime = seekTime;
 
-          await new Promise<void>((resolve) => {
-            video.onseeked = () => resolve();
-          });
+          await Promise.race([
+            new Promise<void>((resolve) => {
+              video.onseeked = () => resolve();
+            }),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("Seek timeout")), 10_000)
+            ),
+          ]);
 
-          if (cancelled) return;
+          if (cancelled) { cleanupVideo(video); return; }
 
           const canvas = document.createElement("canvas");
-          canvas.width = 160;
-          canvas.height = 120;
+          const thumbWidth = 160;
+          const rawAspectRatio = video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 0;
+          const aspectRatio = Number.isFinite(rawAspectRatio) && rawAspectRatio > 0 ? rawAspectRatio : 16 / 9;
+          canvas.width = thumbWidth;
+          canvas.height = Math.round(thumbWidth / aspectRatio);
           const ctx = canvas.getContext("2d");
-          if (!ctx) continue;
+          if (!ctx) { cleanupVideo(video); continue; }
 
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
@@ -181,10 +209,12 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         } catch (error) {
           console.warn(`Failed to extract thumbnail for clip ${clip.edgeId}:`, error);
         }
+        cleanupVideo(video);
       }
 
       if (!cancelled) {
         thumbnailsRef.current = newThumbnails;
+        thumbnailFingerprintsRef.current = newFingerprints;
         setThumbnails(newThumbnails);
       }
     };
@@ -356,7 +386,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             Your browser doesn't support video encoding.
           </span>
           <a
-            href="https://discord.gg/placeholder"
+            href="https://discord.com/invite/89Nr6EKkTf"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[10px] text-blue-400 hover:text-blue-300 underline"
@@ -462,7 +492,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
                         <img
                           src={thumbnail}
                           alt={`Clip ${clip.edgeId}`}
-                          className="w-full h-full object-cover rounded"
+                          className="w-full h-full object-contain rounded"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
@@ -545,7 +575,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         {nodeData.outputVideo && nodeData.status !== "loading" && (
           <div className="relative flex-1 min-h-0">
             <video
-              src={nodeData.outputVideo}
+              src={videoBlobUrl ?? undefined}
               controls
               autoPlay
               loop

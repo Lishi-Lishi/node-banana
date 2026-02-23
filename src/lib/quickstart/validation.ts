@@ -15,14 +15,17 @@ const VALID_NODE_TYPES: NodeType[] = [
   "imageInput",
   "annotation",
   "prompt",
+  "array",
   "nanoBanana",
   "generateVideo",
+  "generate3d",
+  "generateAudio",
   "llmGenerate",
   "splitGrid",
   "output",
 ];
 
-const VALID_HANDLE_TYPES = ["image", "text", "reference"];
+const VALID_HANDLE_TYPES = ["image", "text", "audio", "reference"];
 
 // Default node dimensions
 const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = {
@@ -30,9 +33,12 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   audioInput: { width: 300, height: 200 },
   annotation: { width: 300, height: 280 },
   prompt: { width: 320, height: 220 },
+  array: { width: 360, height: 360 },
   promptConstructor: { width: 340, height: 280 },
   nanoBanana: { width: 300, height: 300 },
   generateVideo: { width: 300, height: 300 },
+  generate3d: { width: 300, height: 300 },
+  generateAudio: { width: 300, height: 280 },
   llmGenerate: { width: 320, height: 360 },
   splitGrid: { width: 300, height: 320 },
   output: { width: 320, height: 320 },
@@ -40,6 +46,9 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   imageCompare: { width: 400, height: 360 },
   videoStitch: { width: 400, height: 280 },
   easeCurve: { width: 340, height: 480 },
+  videoTrim: { width: 360, height: 360 },
+  videoFrameGrab: { width: 320, height: 320 },
+  glbViewer: { width: 360, height: 380 },
 };
 
 /**
@@ -218,6 +227,19 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
       return {
         prompt: "",
       };
+    case "array":
+      return {
+        inputText: null,
+        splitMode: "delimiter",
+        delimiter: "*",
+        regexPattern: "",
+        trimItems: true,
+        removeEmpty: true,
+        selectedOutputIndex: null,
+        outputItems: [],
+        outputText: "[]",
+        error: null,
+      };
     case "promptConstructor":
       return {
         template: "",
@@ -248,6 +270,29 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         error: null,
         videoHistory: [],
         selectedVideoHistoryIndex: 0,
+      };
+    case "generate3d":
+      return {
+        inputImages: [],
+        inputPrompt: null,
+        output3dUrl: null,
+        savedFilename: null,
+        savedFilePath: null,
+        selectedModel: undefined,
+        status: "idle",
+        error: null,
+      };
+    case "generateAudio":
+      return {
+        inputPrompt: null,
+        outputAudio: null,
+        selectedModel: undefined,
+        status: "idle",
+        error: null,
+        audioHistory: [],
+        selectedAudioHistoryIndex: 0,
+        duration: null,
+        format: null,
       };
     case "llmGenerate":
       return {
@@ -297,6 +342,7 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         clips: [],
         clipOrder: [],
         outputVideo: null,
+        loopCount: 1,
         status: "idle",
         error: null,
         progress: 0,
@@ -313,6 +359,30 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         error: null,
         progress: 0,
         encoderSupported: null,
+      };
+    case "videoTrim":
+      return {
+        startTime: 0,
+        endTime: 0,
+        duration: null,
+        outputVideo: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+        encoderSupported: null,
+      };
+    case "videoFrameGrab":
+      return {
+        framePosition: "first",
+        outputImage: null,
+        status: "idle",
+        error: null,
+      };
+    case "glbViewer":
+      return {
+        glbUrl: null,
+        filename: null,
+        capturedImage: null,
       };
   }
 }

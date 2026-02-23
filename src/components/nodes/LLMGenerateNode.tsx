@@ -108,6 +108,8 @@ export function LLMGenerateNode({ id, data, selected }: NodeProps<LLMGenerateNod
       selected={selected}
       hasError={nodeData.status === "error"}
       commentNavigation={commentNavigation ?? undefined}
+      onRun={handleRegenerate}
+      isExecuting={isRunning}
     >
       {/* Image input - optional */}
       <Handle

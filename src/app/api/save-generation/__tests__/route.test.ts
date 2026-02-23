@@ -27,7 +27,7 @@ vi.mock("@/utils/logger", () => ({
 // Store original fetch
 const originalFetch = global.fetch;
 
-import { POST } from "../route";
+import { POST, getExtensionFromUrl } from "../route";
 
 // Helper to create mock NextRequest for POST
 function createMockPostRequest(body: unknown): NextRequest {
@@ -524,5 +524,59 @@ describe("/api/save-generation route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toBe("Failed to create output directory");
     });
+  });
+});
+
+describe("getExtensionFromUrl", () => {
+  it("should extract .glb from a CDN URL", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.glb")).toBe("glb");
+  });
+
+  it("should extract .obj extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.obj")).toBe("obj");
+  });
+
+  it("should extract .fbx extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.fbx")).toBe("fbx");
+  });
+
+  it("should extract .usdz extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.usdz")).toBe("usdz");
+  });
+
+  it("should extract .stl extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.stl")).toBe("stl");
+  });
+
+  it("should extract .gltf extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.gltf")).toBe("gltf");
+  });
+
+  it("should return null for unrecognized extensions", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/file.xyz")).toBeNull();
+  });
+
+  it("should return null for URLs without extensions", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model")).toBeNull();
+  });
+
+  it("should return null for invalid URLs", () => {
+    expect(getExtensionFromUrl("not-a-url")).toBeNull();
+  });
+
+  it("should handle query strings correctly", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.glb?token=abc123")).toBe("glb");
+  });
+
+  it("should handle fragments correctly", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.glb#section")).toBe("glb");
+  });
+
+  it("should return null for URL ending with dot", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.")).toBeNull();
+  });
+
+  it("should not recognize zip as a 3D extension", () => {
+    expect(getExtensionFromUrl("https://cdn.example.com/model.zip")).toBeNull();
   });
 });

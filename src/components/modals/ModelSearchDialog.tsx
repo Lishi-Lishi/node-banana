@@ -89,7 +89,7 @@ function getPaneCenter() {
 }
 
 // Capability filter options
-type CapabilityFilter = "all" | "image" | "video";
+type CapabilityFilter = "all" | "image" | "video" | "3d" | "audio";
 
 // API response type
 interface ModelsResponse {
@@ -200,7 +200,11 @@ export function ModelSearchDialog({
         const capabilities =
           capabilityFilter === "image"
             ? "text-to-image,image-to-image"
-            : "text-to-video,image-to-video";
+            : capabilityFilter === "video"
+            ? "text-to-video,image-to-video"
+            : capabilityFilter === "3d"
+            ? "text-to-3d,image-to-3d"
+            : "text-to-audio";
         params.set("capabilities", capabilities);
       }
       if (bypassCache) {
@@ -315,14 +319,21 @@ export function ModelSearchDialog({
       const isVideoModel = model.capabilities.some(
         (cap) => cap === "text-to-video" || cap === "image-to-video"
       );
+      const is3DModel = model.capabilities.some(
+        (cap) => cap === "text-to-3d" || cap === "image-to-3d"
+      );
+      const isAudioModel = model.capabilities.some(
+        (cap) => cap === "text-to-audio"
+      );
 
-      const nodeType = isVideoModel ? "generateVideo" : "nanoBanana";
+      const nodeType = isVideoModel ? "generateVideo" : is3DModel ? "generate3d" : isAudioModel ? "generateAudio" : "nanoBanana";
 
       addNode(nodeType, position, {
         selectedModel: {
           provider: model.provider,
           modelId: model.id,
           displayName: model.name,
+          capabilities: model.capabilities,
         },
       });
 
@@ -413,9 +424,17 @@ export function ModelSearchDialog({
         const isVideo = matchingModel.capabilities.some(
           (cap) => cap === "text-to-video" || cap === "image-to-video"
         );
+        const is3D = matchingModel.capabilities.some(
+          (cap) => cap === "text-to-3d" || cap === "image-to-3d"
+        );
+        const isAudio = matchingModel.capabilities.some(
+          (cap) => cap === "text-to-audio"
+        );
 
         if (capabilityFilter === "image") return isImage;
         if (capabilityFilter === "video") return isVideo;
+        if (capabilityFilter === "3d") return is3D;
+        if (capabilityFilter === "audio") return isAudio;
         return true;
       })
       .slice(0, 4); // Show max 4
@@ -475,6 +494,18 @@ export function ModelSearchDialog({
         case "image-to-video":
           color = "bg-pink-500/20 text-pink-300";
           label = "img→vid";
+          break;
+        case "text-to-3d":
+          color = "bg-orange-500/20 text-orange-300";
+          label = "txt→3d";
+          break;
+        case "image-to-3d":
+          color = "bg-amber-500/20 text-amber-300";
+          label = "img→3d";
+          break;
+        case "text-to-audio":
+          color = "bg-fuchsia-500/20 text-fuchsia-300";
+          label = "txt→audio";
           break;
       }
 
@@ -635,6 +666,8 @@ export function ModelSearchDialog({
               <option value="all">All Types</option>
               <option value="image">Image</option>
               <option value="video">Video</option>
+              <option value="3d">3D</option>
+              <option value="audio">Audio</option>
             </select>
 
             {/* Refresh Cache */}

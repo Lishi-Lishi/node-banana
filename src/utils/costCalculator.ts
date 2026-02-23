@@ -1,4 +1,4 @@
-import { ModelType, Resolution, NanoBananaNodeData, GenerateVideoNodeData, SplitGridNodeData, WorkflowNode, ProviderType } from "@/types";
+import { ModelType, Resolution, NanoBananaNodeData, GenerateVideoNodeData, Generate3DNodeData, SplitGridNodeData, WorkflowNode, ProviderType } from "@/types";
 
 // Pricing in USD per image (Gemini API)
 export const PRICING = {
@@ -146,7 +146,7 @@ export function calculatePredictedCost(
 
     // Fallback to hardcoded Gemini pricing for legacy models
     if (provider === "gemini") {
-      if (modelId === "nano-banana" || modelId === "gemini-2.5-flash-preview-image-generation") {
+      if (modelId === "nano-banana" || modelId === "gemini-2.5-flash-image") {
         return { unitCost: PRICING["nano-banana"]["1K"], unit: "image" };
       }
       if (modelId === "nano-banana-pro" || modelId === "gemini-3-pro-image-preview") {
@@ -238,6 +238,31 @@ export function calculatePredictedCost(
     nodeCount,
     unknownPricingCount,
   };
+}
+
+/**
+ * Check whether any generation node in the workflow uses a non-Gemini provider.
+ * Used to hide the CostIndicator when pricing data would be incomplete/misleading.
+ */
+export function hasNonGeminiProviders(nodes: WorkflowNode[]): boolean {
+  return nodes.some((node) => {
+    if (node.type === "nanoBanana") {
+      const data = node.data as NanoBananaNodeData;
+      return data.selectedModel?.provider !== undefined && data.selectedModel.provider !== "gemini";
+    }
+    if (node.type === "generateVideo") {
+      const data = node.data as GenerateVideoNodeData;
+      return data.selectedModel?.provider !== undefined && data.selectedModel.provider !== "gemini";
+    }
+    if (node.type === "generate3d") {
+      const data = node.data as Generate3DNodeData;
+      return data.selectedModel?.provider !== undefined && data.selectedModel.provider !== "gemini";
+    }
+    if (node.type === "generateAudio") {
+      return true; // Audio nodes are always non-Gemini
+    }
+    return false;
+  });
 }
 
 export function formatCost(cost: number): string {

@@ -68,8 +68,8 @@ describe("SplitGridSettingsModal", () => {
     });
   });
 
-  describe("Number of Images Selection", () => {
-    it("should render target count options (4, 6, 8, 9, 10)", () => {
+  describe("Grid Layout Selection", () => {
+    it("should render all layout options", () => {
       render(
         <SplitGridSettingsModal
           nodeId="test-node"
@@ -78,14 +78,16 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      expect(screen.getByText("4")).toBeInTheDocument();
-      expect(screen.getByText("6")).toBeInTheDocument();
-      expect(screen.getByText("8")).toBeInTheDocument();
-      expect(screen.getByText("9")).toBeInTheDocument();
-      expect(screen.getByText("10")).toBeInTheDocument();
+      expect(screen.getByText("2x2")).toBeInTheDocument();
+      expect(screen.getByText("1x5")).toBeInTheDocument();
+      expect(screen.getByText("2x3")).toBeInTheDocument();
+      expect(screen.getByText("3x2")).toBeInTheDocument();
+      expect(screen.getByText("2x4")).toBeInTheDocument();
+      expect(screen.getByText("3x3")).toBeInTheDocument();
+      expect(screen.getByText("2x5")).toBeInTheDocument();
     });
 
-    it("should highlight selected target count", () => {
+    it("should highlight selected layout", () => {
       render(
         <SplitGridSettingsModal
           nodeId="test-node"
@@ -94,13 +96,13 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      // Default is 6, check its button has the selected styling
+      // Default is 2x3, check its button has the selected styling
       const buttons = screen.getAllByRole("button");
-      const sixButton = buttons.find(btn => btn.textContent?.includes("6"));
-      expect(sixButton).toHaveClass("border-blue-500");
+      const selectedButton = buttons.find(btn => btn.textContent?.includes("2x3"));
+      expect(selectedButton).toHaveClass("border-blue-500");
     });
 
-    it("should update target count when option is clicked", () => {
+    it("should update layout when option is clicked", () => {
       render(
         <SplitGridSettingsModal
           nodeId="test-node"
@@ -109,10 +111,10 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      // Click on 9
+      // Click on 3x3
       const buttons = screen.getAllByRole("button");
-      const nineButton = buttons.find(btn => btn.textContent?.includes("9"));
-      fireEvent.click(nineButton!);
+      const threeByThreeButton = buttons.find(btn => btn.textContent?.includes("3x3"));
+      fireEvent.click(threeByThreeButton!);
 
       // The grid description should update
       expect(screen.getByText(/3x3 = 9 images/)).toBeInTheDocument();
@@ -127,8 +129,26 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      // Default is 6, which is 2x3
+      // Default is 2x3
       expect(screen.getByText(/2x3 = 6 images/)).toBeInTheDocument();
+    });
+
+    it("should allow selecting 3x2 layout (6 images, portrait orientation)", () => {
+      render(
+        <SplitGridSettingsModal
+          nodeId="test-node"
+          nodeData={createDefaultNodeData()}
+          onClose={vi.fn()}
+        />
+      );
+
+      // Click on 3x2
+      const buttons = screen.getAllByRole("button");
+      const threeByTwoButton = buttons.find(btn => btn.textContent?.includes("3x2"));
+      fireEvent.click(threeByTwoButton!);
+
+      // Should show 3x2 = 6 images
+      expect(screen.getByText(/3x2 = 6 images/)).toBeInTheDocument();
     });
   });
 
@@ -344,7 +364,7 @@ describe("SplitGridSettingsModal", () => {
       expect(screen.getByText("Create 6 Generate Sets")).toBeInTheDocument();
     });
 
-    it("should update Create button text when target count changes", () => {
+    it("should update Create button text when layout changes", () => {
       render(
         <SplitGridSettingsModal
           nodeId="test-node"
@@ -353,10 +373,10 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      // Click on 9
+      // Click on 3x3
       const buttons = screen.getAllByRole("button");
-      const nineButton = buttons.find(btn => btn.textContent?.includes("9") && !btn.textContent?.includes("Create"));
-      fireEvent.click(nineButton!);
+      const threeByThreeButton = buttons.find(btn => btn.textContent?.includes("3x3") && !btn.textContent?.includes("Create"));
+      fireEvent.click(threeByThreeButton!);
 
       expect(screen.getByText("Create 9 Generate Sets")).toBeInTheDocument();
     });
@@ -431,9 +451,9 @@ describe("SplitGridSettingsModal", () => {
         />
       );
 
-      // Each target count button should have a grid preview
+      // Each layout button should have a grid preview
       const gridPreviews = container.querySelectorAll(".aspect-video");
-      expect(gridPreviews.length).toBe(6); // 6 options: 4, 5, 6, 8, 9, 10
+      expect(gridPreviews.length).toBe(7); // 7 layout options
     });
   });
 
@@ -441,6 +461,8 @@ describe("SplitGridSettingsModal", () => {
     it("should use node data values as initial state", () => {
       const nodeData = createDefaultNodeData();
       nodeData.targetCount = 9;
+      nodeData.gridRows = 3;
+      nodeData.gridCols = 3;
       nodeData.defaultPrompt = "Existing prompt";
       nodeData.generateSettings = {
         aspectRatio: "16:9",

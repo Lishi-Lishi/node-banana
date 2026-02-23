@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useWorkflowStore } from "@/store/workflowStore";
-import { calculatePredictedCost, formatCost } from "@/utils/costCalculator";
+import { calculatePredictedCost, formatCost, hasNonGeminiProviders } from "@/utils/costCalculator";
 import { CostDialog } from "./CostDialog";
 
 export function CostIndicator() {
@@ -14,9 +14,10 @@ export function CostIndicator() {
     return calculatePredictedCost(nodes);
   }, [nodes]);
 
+  const nonGemini = useMemo(() => hasNonGeminiProviders(nodes), [nodes]);
   const hasAnyNodes = predictedCost.nodeCount > 0;
 
-  if (!hasAnyNodes && incurredCost === 0) {
+  if (nonGemini || (!hasAnyNodes && incurredCost === 0)) {
     return null;
   }
 

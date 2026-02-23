@@ -13,16 +13,8 @@ import {
   WorkflowNode,
   WorkflowEdge,
   NodeType,
-  ImageInputNodeData,
-  AudioInputNodeData,
-  AnnotationNodeData,
-  PromptNodeData,
-  PromptConstructorNodeData,
   NanoBananaNodeData,
-  GenerateVideoNodeData,
-  LLMGenerateNodeData,
-  SplitGridNodeData,
-  OutputNodeData,
+  OutputGalleryNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
   NodeGroup,
@@ -30,12 +22,9 @@ import {
   ProviderType,
   ProviderSettings,
   RecentModel,
-  OutputGalleryNodeData,
-  VideoStitchNodeData,
-  EaseCurveNodeData,
+  CanvasNavigationSettings,
 } from "@/types";
 import { useToast } from "@/components/Toast";
-import { calculateGenerationCost } from "@/utils/costCalculator";
 import { logger } from "@/utils/logger";
 import { externalizeWorkflowImages, hydrateWorkflowImages } from "@/utils/imageStorage";
 import { EditOperation, applyEditOperations as executeEditOps } from "@/lib/chat/editOperations";
@@ -51,6 +40,8 @@ import {
   saveRecentModels,
   MAX_RECENT_MODELS,
   generateWorkflowId,
+  getCanvasNavigationSettings,
+  saveCanvasNavigationSettings,
 } from "./utils/localStorage";
 import {
   createDefaultNodeData,
@@ -58,14 +49,112 @@ import {
   GROUP_COLORS,
   GROUP_COLOR_ORDER,
 } from "./utils/nodeDefaults";
+import {
+  CONCURRENCY_SETTINGS_KEY,
+  loadConcurrencySetting,
+  saveConcurrencySetting,
+  groupNodesByLevel,
+  chunk,
+  clearNodeImageRefs,
+} from "./utils/executionUtils";
+import { getConnectedInputsPure, validateWorkflowPure } from "./utils/connectedInputs";
+import {
+  executeAnnotation,
+  executeArray,
+  executePrompt,
+  executePromptConstructor,
+  executeOutput,
+  executeOutputGallery,
+  executeImageCompare,
+  executeNanoBanana,
+  executeGenerateVideo,
+  executeGenerate3D,
+  executeGenerateAudio,
+  executeLlmGenerate,
+  executeSplitGrid,
+  executeVideoStitch,
+  executeEaseCurve,
+  executeVideoTrim,
+  executeVideoFrameGrab,
+  executeGlbViewer,
+} from "./execution";
+import type { NodeExecutionContext } from "./execution";
+export type { LevelGroup } from "./utils/executionUtils";
+export { CONCURRENCY_SETTINGS_KEY } from "./utils/executionUtils";
+
+function saveLogSession(): void {
+  const session = logger.getCurrentSession();
+  if (session) {
+    session.endTime = new Date().toISOString();
+    fetch('/api/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session }),
+    }).catch((err) => {
+      console.error('Failed to save log session:', err);
+    });
+  }
+}
 
 export type EdgeStyle = "angular" | "curved";
+
+function buildConnectionEdgeData(
+  connection: Connection,
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[]
+): Record<string, unknown> {
+  const baseData: Record<string, unknown> = { createdAt: Date.now() };
+  const sourceNode = nodes.find((n) => n.id === connection.source);
+
+  // Array node uses a single output handle; assign each edge a stable item index.
+  if (sourceNode?.type === "array" && (connection.sourceHandle || "text") === "text") {
+    const sourceData = sourceNode.data as Record<string, unknown>;
+    const selectedIndex = sourceData.selectedOutputIndex;
+    const outputItems = Array.isArray(sourceData.outputItems) ? sourceData.outputItems : [];
+    const outputCount = outputItems.length;
+
+    if (
+      typeof selectedIndex === "number" &&
+      Number.isInteger(selectedIndex) &&
+      selectedIndex >= 0 &&
+      (outputCount === 0 || selectedIndex < outputCount)
+    ) {
+      baseData.arrayItemIndex = selectedIndex;
+      return baseData;
+    }
+
+    if (outputCount > 0) {
+      const existingArrayEdges = edges.filter(
+        (e) => e.source === connection.source && (e.sourceHandle || "text") === "text"
+      );
+
+      const lastEdge = existingArrayEdges.reduce<WorkflowEdge | null>((latest, edge) => {
+        if (!latest) return edge;
+        const latestTime = (latest.data as Record<string, unknown> | undefined)?.createdAt;
+        const edgeTime = (edge.data as Record<string, unknown> | undefined)?.createdAt;
+        return (typeof edgeTime === "number" && typeof latestTime === "number" && edgeTime > latestTime) ? edge : latest;
+      }, null);
+
+      const lastIndex = (lastEdge?.data as Record<string, unknown> | undefined)?.arrayItemIndex;
+      const startIndex = typeof lastIndex === "number" && Number.isInteger(lastIndex) && lastIndex >= 0
+        ? lastIndex + 1
+        : existingArrayEdges.length;
+
+      baseData.arrayItemIndex = startIndex % outputCount;
+    } else {
+      baseData.arrayItemIndex = 0;
+    }
+  }
+
+  return baseData;
+}
 
 // Workflow file format
 export interface WorkflowFile {
   version: 1;
   id?: string;  // Optional for backward compatibility with old/shared workflows
   name: string;
+  directoryPath?: string;  // Embedded save path so image hydration works on import
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   edgeStyle: EdgeStyle;
@@ -96,8 +185,8 @@ interface WorkflowStore {
 
   // Edge operations
   onEdgesChange: (changes: EdgeChange<WorkflowEdge>[]) => void;
-  onConnect: (connection: Connection) => void;
-  addEdgeWithType: (connection: Connection, edgeType: string) => void;
+  onConnect: (connection: Connection, edgeDataOverrides?: Record<string, unknown>) => void;
+  addEdgeWithType: (connection: Connection, edgeType: string, edgeDataOverrides?: Record<string, unknown>) => void;
   removeEdge: (edgeId: string) => void;
   toggleEdgePause: (edgeId: string) => void;
 
@@ -130,8 +219,10 @@ interface WorkflowStore {
   pausedAtNodeId: string | null;
   maxConcurrentCalls: number;  // Configurable concurrency limit (1-10)
   _abortController: AbortController | null;  // Internal: for cancellation
+  _buildExecutionContext: (node: WorkflowNode, signal?: AbortSignal) => NodeExecutionContext;
   executeWorkflow: (startFromNodeId?: string) => Promise<void>;
   regenerateNode: (nodeId: string) => Promise<void>;
+  executeSelectedNodes: (nodeIds: string[]) => Promise<void>;
   stopWorkflow: () => void;
   setMaxConcurrentCalls: (value: number) => void;
 
@@ -142,7 +233,7 @@ interface WorkflowStore {
 
   // Helpers
   getNodeById: (id: string) => WorkflowNode | undefined;
-  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; text: string | null; dynamicInputs: Record<string, string | string[]>; easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null } | null };
+  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; model3d: string | null; text: string | null; dynamicInputs: Record<string, string | string[]>; easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null } | null };
   validateWorkflow: () => { valid: boolean; errors: string[] };
 
   // Global Image History
@@ -170,6 +261,7 @@ interface WorkflowStore {
   setUseExternalImageStorage: (enabled: boolean) => void;
   markAsUnsaved: () => void;
   saveToFile: () => Promise<boolean>;
+  saveAsFile: (name: string) => Promise<boolean>;
   initializeAutoSave: () => void;
   cleanupAutoSave: () => void;
 
@@ -193,6 +285,10 @@ interface WorkflowStore {
   // Model search dialog state
   modelSearchOpen: boolean;
   modelSearchProvider: ProviderType | null;
+
+  // Keyboard shortcuts dialog state
+  shortcutsDialogOpen: boolean;
+  setShortcutsDialogOpen: (open: boolean) => void;
 
   // Model search dialog actions
   setModelSearchOpen: (open: boolean, provider?: ProviderType | null) => void;
@@ -231,6 +327,12 @@ interface WorkflowStore {
   clearSnapshot: () => void;
   incrementManualChangeCount: () => void;
   applyEditOperations: (operations: EditOperation[]) => { applied: number; skipped: string[] };
+
+  // Canvas navigation settings state
+  canvasNavigationSettings: CanvasNavigationSettings;
+
+  // Canvas navigation settings actions
+  updateCanvasNavigationSettings: (settings: CanvasNavigationSettings) => void;
 }
 
 let nodeIdCounter = 0;
@@ -239,66 +341,6 @@ let autoSaveIntervalId: ReturnType<typeof setInterval> | null = null;
 
 // Track pending save-generation syncs to ensure IDs are resolved before workflow save
 const pendingImageSyncs = new Map<string, Promise<void>>();
-
-// Helper to save a generation and sync the history ID
-// Returns immediately but tracks the async operation for later awaiting
-function trackSaveGeneration(
-  genPath: string,
-  content: { image?: string; video?: string },
-  prompt: string | null,
-  tempId: string,
-  nodeId: string,
-  historyType: 'image' | 'video',
-  get: () => WorkflowStore,
-  updateNodeData: (nodeId: string, data: Partial<WorkflowNodeData>) => void
-): void {
-  const syncPromise = fetch("/api/save-generation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      directoryPath: genPath,
-      image: content.image,
-      video: content.video,
-      prompt,
-      imageId: tempId,
-    }),
-  })
-    .then((res) => res.json())
-    .then((saveResult) => {
-      // Update history with actual saved ID for carousel loading
-      if (saveResult.success && saveResult.imageId && saveResult.imageId !== tempId) {
-        const currentNode = get().nodes.find((n) => n.id === nodeId);
-        if (currentNode) {
-          if (historyType === 'image') {
-            const currentData = currentNode.data as NanoBananaNodeData;
-            const updatedHistory = [...(currentData.imageHistory || [])];
-            const entryIndex = updatedHistory.findIndex((h) => h.id === tempId);
-            if (entryIndex !== -1) {
-              updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
-              updateNodeData(nodeId, { imageHistory: updatedHistory });
-            }
-          } else {
-            const currentData = currentNode.data as GenerateVideoNodeData;
-            const updatedHistory = [...(currentData.videoHistory || [])];
-            const entryIndex = updatedHistory.findIndex((h) => h.id === tempId);
-            if (entryIndex !== -1) {
-              updatedHistory[entryIndex] = { ...updatedHistory[entryIndex], id: saveResult.imageId };
-              updateNodeData(nodeId, { videoHistory: updatedHistory });
-            }
-          }
-        }
-      }
-    })
-    .catch((err) => {
-      console.error(`Failed to save ${historyType === 'video' ? 'video' : ''} generation:`, err);
-    })
-    .finally(() => {
-      // Remove from pending syncs when done (success or failure)
-      pendingImageSyncs.delete(tempId);
-    });
-
-  pendingImageSyncs.set(tempId, syncPromise);
-}
 
 // Wait for all pending image syncs to complete (with timeout to prevent infinite hangs)
 async function waitForPendingImageSyncs(timeout: number = 60000): Promise<void> {
@@ -322,121 +364,6 @@ async function waitForPendingImageSyncs(timeout: number = 60000): Promise<void> 
   }
 }
 
-// Concurrency settings
-export const CONCURRENCY_SETTINGS_KEY = "node-banana-concurrency-limit";
-const DEFAULT_MAX_CONCURRENT_CALLS = 3;
-
-// Load/save concurrency setting from localStorage
-const loadConcurrencySetting = (): number => {
-  if (typeof window === "undefined") return DEFAULT_MAX_CONCURRENT_CALLS;
-  const stored = localStorage.getItem(CONCURRENCY_SETTINGS_KEY);
-  if (stored) {
-    const parsed = parseInt(stored, 10);
-    if (!isNaN(parsed) && parsed >= 1 && parsed <= 10) {
-      return parsed;
-    }
-  }
-  return DEFAULT_MAX_CONCURRENT_CALLS;
-};
-
-const saveConcurrencySetting = (value: number): void => {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(CONCURRENCY_SETTINGS_KEY, String(value));
-};
-
-// Level grouping for parallel execution
-export interface LevelGroup {
-  level: number;
-  nodeIds: string[];
-}
-
-/**
- * Groups nodes by dependency level using Kahn's algorithm variant.
- * Nodes at the same level can be executed in parallel.
- * Level 0 = nodes with no incoming edges (roots)
- * Level N = nodes whose dependencies are all at levels < N
- */
-function groupNodesByLevel(
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[]
-): LevelGroup[] {
-  // Calculate in-degree for each node
-  const inDegree = new Map<string, number>();
-  const adjList = new Map<string, string[]>();
-
-  nodes.forEach((n) => {
-    inDegree.set(n.id, 0);
-    adjList.set(n.id, []);
-  });
-
-  edges.forEach((e) => {
-    inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-    adjList.get(e.source)?.push(e.target);
-  });
-
-  // BFS with level tracking (Kahn's algorithm variant)
-  const levels: LevelGroup[] = [];
-  let currentLevel = nodes
-    .filter((n) => inDegree.get(n.id) === 0)
-    .map((n) => n.id);
-
-  let levelNum = 0;
-  while (currentLevel.length > 0) {
-    levels.push({ level: levelNum, nodeIds: [...currentLevel] });
-
-    const nextLevel: string[] = [];
-    for (const nodeId of currentLevel) {
-      for (const child of adjList.get(nodeId) || []) {
-        const newDegree = (inDegree.get(child) || 1) - 1;
-        inDegree.set(child, newDegree);
-        if (newDegree === 0) {
-          nextLevel.push(child);
-        }
-      }
-    }
-
-    currentLevel = nextLevel;
-    levelNum++;
-  }
-
-  return levels;
-}
-
-/**
- * Chunk an array into smaller arrays of specified size
- */
-function chunk<T>(array: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
-  }
-  return chunks;
-}
-
-// Clear all imageRefs from nodes (used when saving to a different directory)
-/** Revoke a blob URL if the value is one, to free the underlying memory. */
-function revokeBlobUrl(url: string | null | undefined): void {
-  if (url && url.startsWith('blob:')) {
-    try { URL.revokeObjectURL(url); } catch { /* ignore */ }
-  }
-}
-
-function clearNodeImageRefs(nodes: WorkflowNode[]): WorkflowNode[] {
-  return nodes.map(node => {
-    const data = { ...node.data } as Record<string, unknown>;
-
-    // Revoke blob URLs for video outputs before clearing
-    revokeBlobUrl(data.outputVideo as string | undefined);
-
-    // Clear all ref fields regardless of node type
-    delete data.imageRef;
-    delete data.sourceImageRef;
-    delete data.outputImageRef;
-    delete data.inputImageRefs;
-
-    return { ...node, data: data as WorkflowNodeData } as WorkflowNode;
-  });
-}
 
 // Re-export for backward compatibility
 export { generateWorkflowId, saveGenerateImageDefaults, saveNanoBananaDefaults } from "./utils/localStorage";
@@ -480,6 +407,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   modelSearchOpen: false,
   modelSearchProvider: null,
 
+  // Keyboard shortcuts dialog initial state
+  shortcutsDialogOpen: false,
+
   // Recent models initial state
   recentModels: getRecentModels(),
 
@@ -491,6 +421,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // AI change snapshot initial state
   previousWorkflowSnapshot: null,
   manualChangeCount: 0,
+
+  // Canvas navigation settings initial state
+  canvasNavigationSettings: getCanvasNavigationSettings(),
 
   setEdgeStyle: (style: EdgeStyle) => {
     set({ edgeStyle: style });
@@ -599,34 +532,37 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }
   },
 
-  onConnect: (connection: Connection) => {
-    set((state) => ({
-      edges: addEdge(
-        {
-          ...connection,
-          id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
-          data: { createdAt: Date.now() },
-        },
-        state.edges
-      ),
-      hasUnsavedChanges: true,
-    }));
+  onConnect: (connection: Connection, edgeDataOverrides?: Record<string, unknown>) => {
+    set((state) => {
+      const baseData = buildConnectionEdgeData(connection, state.nodes, state.edges);
+      const newEdge = {
+        ...connection,
+        id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
+        data: edgeDataOverrides ? { ...baseData, ...edgeDataOverrides } : baseData,
+      };
+      // Cast needed: React Flow's Edge<T> types data as T | undefined, but addEdge expects data to be defined
+      return {
+        edges: addEdge(newEdge, state.edges as never) as WorkflowEdge[],
+        hasUnsavedChanges: true,
+      };
+    });
     get().incrementManualChangeCount();
   },
 
-  addEdgeWithType: (connection: Connection, edgeType: string) => {
-    set((state) => ({
-      edges: addEdge(
-        {
-          ...connection,
-          id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
-          type: edgeType,
-          data: { createdAt: Date.now() },
-        },
-        state.edges
-      ),
-      hasUnsavedChanges: true,
-    }));
+  addEdgeWithType: (connection: Connection, edgeType: string, edgeDataOverrides?: Record<string, unknown>) => {
+    set((state) => {
+      const baseData = buildConnectionEdgeData(connection, state.nodes, state.edges);
+      const newEdge = {
+        ...connection,
+        id: `edge-${connection.source}-${connection.target}-${connection.sourceHandle || "default"}-${connection.targetHandle || "default"}`,
+        type: edgeType,
+        data: edgeDataOverrides ? { ...baseData, ...edgeDataOverrides } : baseData,
+      };
+      return {
+        edges: addEdge(newEdge, state.edges as never) as WorkflowEdge[],
+        hasUnsavedChanges: true,
+      };
+    });
   },
 
   removeEdge: (edgeId: string) => {
@@ -691,7 +627,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         y: node.position.y + offset.y,
       },
       selected: true, // Select newly pasted nodes
-      data: { ...node.data }, // Deep copy data
+      data: JSON.parse(JSON.stringify(node.data)),
     }));
 
     // Create new edges with updated source/target IDs
@@ -712,6 +648,20 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       nodes: [...updatedNodes, ...newNodes] as WorkflowNode[],
       edges: [...edges, ...newEdges],
       hasUnsavedChanges: true,
+    });
+
+    // Fix React Flow selection race condition: After paste, React Flow's internal
+    // reconciliation may fire onNodesChange with stale selection state that re-selects
+    // original nodes. Schedule an explicit selection correction after reconciliation.
+    const newNodeIdSet = new Set(newNodes.map(n => n.id));
+    requestAnimationFrame(() => {
+      const currentNodes = get().nodes;
+      const selectionChanges: NodeChange<WorkflowNode>[] = currentNodes.map(n => ({
+        type: 'select' as const,
+        id: n.id,
+        selected: newNodeIdSet.has(n.id),
+      }));
+      get().onNodesChange(selectionChanges);
     });
   },
 
@@ -874,206 +824,46 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   getConnectedInputs: (nodeId: string) => {
     const { edges, nodes } = get();
-    const images: string[] = [];
-    const videos: string[] = [];
-    const audio: string[] = [];
-    let text: string | null = null;
-    const dynamicInputs: Record<string, string | string[]> = {};
-
-    // Get the target node to check for inputSchema
-    const targetNode = nodes.find((n) => n.id === nodeId);
-    const inputSchema = (targetNode?.data as { inputSchema?: Array<{ name: string; type: string }> })?.inputSchema;
-
-    // Build mapping from normalized handle IDs to schema names if schema exists
-    // Handles use normalized IDs ("image", "image-0", "text", "text-0")
-    // but API needs schema names ("image_url", "first_frame", "prompt", etc.)
-    const handleToSchemaName: Record<string, string> = {};
-    if (inputSchema && inputSchema.length > 0) {
-      const imageInputs = inputSchema.filter(i => i.type === "image");
-      const textInputs = inputSchema.filter(i => i.type === "text");
-
-      // Map image handles to schema names
-      // Always use indexed IDs (image-0, image-1) to match node component
-      // Also map legacy ID ("image") for first input for backward compatibility
-      imageInputs.forEach((input, index) => {
-        handleToSchemaName[`image-${index}`] = input.name;
-        if (index === 0) {
-          handleToSchemaName["image"] = input.name;
-        }
-      });
-
-      // Map text handles to schema names
-      // Always use indexed IDs (text-0, text-1) to match node component
-      // Also map legacy ID ("text") for first input for backward compatibility
-      textInputs.forEach((input, index) => {
-        handleToSchemaName[`text-${index}`] = input.name;
-        if (index === 0) {
-          handleToSchemaName["text"] = input.name;
-        }
-      });
-    }
-
-    // Helper to determine if a handle ID is an image type
-    const isImageHandle = (handleId: string | null | undefined): boolean => {
-      if (!handleId) return false;
-      return handleId === "image" || handleId.startsWith("image-") || handleId.includes("frame");
-    };
-
-    // Helper to determine if a handle ID is a text type
-    const isTextHandle = (handleId: string | null | undefined): boolean => {
-      if (!handleId) return false;
-      return handleId === "text" || handleId.startsWith("text-") || handleId.includes("prompt");
-    };
-
-    // Helper to extract output from source node
-    const getSourceOutput = (sourceNode: WorkflowNode): { type: "image" | "text" | "video" | "audio"; value: string | null } => {
-      if (sourceNode.type === "imageInput") {
-        return { type: "image", value: (sourceNode.data as ImageInputNodeData).image };
-      } else if (sourceNode.type === "audioInput") {
-        return { type: "audio", value: (sourceNode.data as AudioInputNodeData).audioFile };
-      } else if (sourceNode.type === "annotation") {
-        return { type: "image", value: (sourceNode.data as AnnotationNodeData).outputImage };
-      } else if (sourceNode.type === "nanoBanana") {
-        return { type: "image", value: (sourceNode.data as NanoBananaNodeData).outputImage };
-      } else if (sourceNode.type === "generateVideo") {
-        // Return video type - generateVideo and output nodes handle this appropriately
-        return { type: "video", value: (sourceNode.data as GenerateVideoNodeData).outputVideo };
-      } else if (sourceNode.type === "videoStitch") {
-        return { type: "video", value: (sourceNode.data as VideoStitchNodeData).outputVideo };
-      } else if (sourceNode.type === "easeCurve") {
-        return { type: "video", value: (sourceNode.data as EaseCurveNodeData).outputVideo };
-      } else if (sourceNode.type === "prompt") {
-        return { type: "text", value: (sourceNode.data as PromptNodeData).prompt };
-      } else if (sourceNode.type === "promptConstructor") {
-        const pcData = sourceNode.data as PromptConstructorNodeData;
-        return { type: "text", value: pcData.outputText || pcData.template || null };
-      } else if (sourceNode.type === "llmGenerate") {
-        return { type: "text", value: (sourceNode.data as LLMGenerateNodeData).outputText };
-      }
-      return { type: "image", value: null };
-    };
-
-    edges
-      .filter((edge) => edge.target === nodeId)
-      .forEach((edge) => {
-        const sourceNode = nodes.find((n) => n.id === edge.source);
-        if (!sourceNode) return;
-
-        const handleId = edge.targetHandle;
-        const { type, value } = getSourceOutput(sourceNode);
-
-        if (!value) return;
-
-        // Map normalized handle ID to schema name for dynamicInputs
-        // This allows API to receive schema-specific parameter names
-        if (handleId && handleToSchemaName[handleId]) {
-          const schemaName = handleToSchemaName[handleId];
-          const existing = dynamicInputs[schemaName];
-          if (existing !== undefined) {
-            dynamicInputs[schemaName] = Array.isArray(existing)
-              ? [...existing, value]
-              : [existing, value];
-          } else {
-            dynamicInputs[schemaName] = value;
-          }
-        }
-
-        // Route to typed arrays based on source output type
-        // This preserves type information from the source node
-        if (type === "video") {
-          videos.push(value);
-        } else if (type === "audio") {
-          audio.push(value);
-        } else if (type === "text" || isTextHandle(handleId)) {
-          text = value;
-        } else if (isImageHandle(handleId) || !handleId) {
-          images.push(value);
-        }
-      });
-
-    // Extract easeCurve data from parent EaseCurve node
-    let easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null } | null = null;
-    const easeCurveEdge = edges.find(
-      (e) => e.target === nodeId && e.targetHandle === "easeCurve"
-    );
-    if (easeCurveEdge) {
-      const sourceNode = nodes.find((n) => n.id === easeCurveEdge.source);
-      if (sourceNode?.type === "easeCurve") {
-        const sourceData = sourceNode.data as EaseCurveNodeData;
-        easeCurve = {
-          bezierHandles: sourceData.bezierHandles,
-          easingPreset: sourceData.easingPreset,
-        };
-      }
-    }
-
-    return { images, videos, audio, text, dynamicInputs, easeCurve };
+    return getConnectedInputsPure(nodeId, nodes, edges);
   },
 
   validateWorkflow: () => {
     const { nodes, edges } = get();
-    const errors: string[] = [];
-
-    // Check if there are any nodes
-    if (nodes.length === 0) {
-      errors.push("Workflow is empty");
-      return { valid: false, errors };
-    }
-
-    // Check each Nano Banana node has required inputs (text required, image optional)
-    nodes
-      .filter((n) => n.type === "nanoBanana")
-      .forEach((node) => {
-        const textConnected = edges.some(
-          (e) => e.target === node.id &&
-                 (e.targetHandle === "text" || e.targetHandle?.startsWith("text-"))
-        );
-
-        if (!textConnected) {
-          errors.push(`Generate node "${node.id}" missing text input`);
-        }
-      });
-
-    // Check generateVideo nodes have required text input
-    nodes
-      .filter((n) => n.type === "generateVideo")
-      .forEach((node) => {
-        const textConnected = edges.some(
-          (e) => e.target === node.id &&
-                 (e.targetHandle === "text" || e.targetHandle?.startsWith("text-"))
-        );
-
-        if (!textConnected) {
-          errors.push(`Video node "${node.id}" missing text input`);
-        }
-      });
-
-    // Check annotation nodes have image input (either connected or manually loaded)
-    nodes
-      .filter((n) => n.type === "annotation")
-      .forEach((node) => {
-        const imageConnected = edges.some((e) => e.target === node.id);
-        const hasManualImage = (node.data as AnnotationNodeData).sourceImage !== null;
-        if (!imageConnected && !hasManualImage) {
-          errors.push(`Annotation node "${node.id}" missing image input`);
-        }
-      });
-
-    // Check output nodes have image input
-    nodes
-      .filter((n) => n.type === "output")
-      .forEach((node) => {
-        const imageConnected = edges.some((e) => e.target === node.id);
-        if (!imageConnected) {
-          errors.push(`Output node "${node.id}" missing image input`);
-        }
-      });
-
-    return { valid: errors.length === 0, errors };
+    return validateWorkflowPure(nodes, edges);
   },
 
+  _buildExecutionContext: (node: WorkflowNode, signal?: AbortSignal): NodeExecutionContext => ({
+    node,
+    getConnectedInputs: get().getConnectedInputs,
+    updateNodeData: get().updateNodeData,
+    getFreshNode: (id: string) => get().nodes.find((n) => n.id === id),
+    getEdges: () => get().edges,
+    getNodes: () => get().nodes,
+    signal,
+    providerSettings: get().providerSettings,
+    addIncurredCost: (cost: number) => get().addIncurredCost(cost),
+    addToGlobalHistory: (item) => get().addToGlobalHistory(item),
+    generationsPath: get().generationsPath,
+    saveDirectoryPath: get().saveDirectoryPath,
+    trackSaveGeneration: (key: string, promise: Promise<void>) => {
+      pendingImageSyncs.set(key, promise);
+      promise.finally(() => pendingImageSyncs.delete(key));
+    },
+    appendOutputGalleryImage: (targetId: string, image: string) => {
+      set((state) => ({
+        nodes: state.nodes.map((n) =>
+          n.id === targetId && n.type === "outputGallery"
+            ? { ...n, data: { ...n.data, images: [image, ...((n.data as OutputGalleryNodeData).images || [])] } as WorkflowNodeData }
+            : n
+        ) as WorkflowNode[],
+        hasUnsavedChanges: true,
+      }));
+    },
+    get: get as () => unknown,
+  }),
+
   executeWorkflow: async (startFromNodeId?: string) => {
-    const { nodes, edges, groups, updateNodeData, getConnectedInputs, isRunning, maxConcurrentCalls } = get();
+    const { nodes, edges, groups, isRunning, maxConcurrentCalls } = get();
 
     if (isRunning) {
       logger.warn('workflow.start', 'Workflow already running, ignoring execution request');
@@ -1149,1083 +939,74 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         nodeType: node.type,
       });
 
-      // NOTE: The switch statement below executes the node based on its type
-      // The signal parameter should be passed to any fetch calls for cancellation
+      const executionCtx = get()._buildExecutionContext(node, signal);
 
       switch (node.type) {
           case "imageInput":
-            // Nothing to execute, data is already set
+            // Data source node - no execution needed
             break;
-
-          case "audioInput":
-            // Audio input is a data source - no execution needed
-            break;
-
-          case "annotation": {
-            try {
-              // Get connected image and set as source (use first image)
-              const { images } = getConnectedInputs(node.id);
-              const image = images[0] || null;
-              if (image) {
-                updateNodeData(node.id, { sourceImage: image });
-                // If no annotations, pass through the image
-                const nodeData = node.data as AnnotationNodeData;
-                if (!nodeData.outputImage) {
-                  updateNodeData(node.id, { outputImage: image });
-                }
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              console.error(`[Workflow] Annotation node ${node.id} failed:`, message);
-              updateNodeData(node.id, { error: message });
+          case "audioInput": {
+            // If audio is connected from upstream, use it (connection wins over upload)
+            const audioInputs = get().getConnectedInputs(node.id);
+            if (audioInputs.audio.length > 0 && audioInputs.audio[0]) {
+              get().updateNodeData(node.id, { audioFile: audioInputs.audio[0] });
             }
             break;
           }
-
-          case "prompt": {
-            try {
-              // Check for connected text input and update prompt if connected
-              const { text: connectedText } = getConnectedInputs(node.id);
-              if (connectedText !== null) {
-                updateNodeData(node.id, { prompt: connectedText });
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              console.error(`[Workflow] Prompt node ${node.id} failed:`, message);
-              updateNodeData(node.id, { error: message });
-            }
+          case "glbViewer":
+            await executeGlbViewer(executionCtx);
             break;
-          }
-
-          case "promptConstructor": {
-            try {
-              // Get fresh node data from store
-              const freshNode = get().nodes.find((n) => n.id === node.id);
-              const nodeData = (freshNode?.data || node.data) as PromptConstructorNodeData;
-              const template = nodeData.template;
-
-              // Find connected prompt nodes via text edges
-              const connectedPromptNodes = edges
-                .filter((e) => e.target === node.id && e.targetHandle === "text")
-                .map((e) => nodes.find((n) => n.id === e.source))
-                .filter((n): n is WorkflowNode => n !== undefined && n.type === "prompt");
-
-              // Build variable map from connected prompt nodes
-              const variableMap: Record<string, string> = {};
-              connectedPromptNodes.forEach((promptNode) => {
-                const promptData = promptNode.data as PromptNodeData;
-                if (promptData.variableName) {
-                  variableMap[promptData.variableName] = promptData.prompt;
-                }
-              });
-
-              // Find all @variable patterns in template
-              const varPattern = /@(\w+)/g;
-              const unresolvedVars: string[] = [];
-              let resolvedText = template;
-
-              // Replace @variables with values or track unresolved
-              const matches = template.matchAll(varPattern);
-              for (const match of matches) {
-                const varName = match[1];
-                if (variableMap[varName] !== undefined) {
-                  // Replace with actual value
-                  resolvedText = resolvedText.replaceAll(`@${varName}`, variableMap[varName]);
-                } else {
-                  // Track unresolved variable
-                  if (!unresolvedVars.includes(varName)) {
-                    unresolvedVars.push(varName);
-                  }
-                }
-              }
-
-              // Update node with resolved text and unresolved vars list
-              updateNodeData(node.id, {
-                outputText: resolvedText,
-                unresolvedVars,
-              });
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              console.error(`[Workflow] PromptConstructor node ${node.id} failed:`, message);
-              updateNodeData(node.id, { error: message });
-            }
+          case "annotation":
+            await executeAnnotation(executionCtx);
             break;
-          }
-
-          case "nanoBanana": {
-            const { images, text, dynamicInputs } = getConnectedInputs(node.id);
-
-            // For dynamic inputs, check if we have at least a prompt
-            const promptFromDynamic = Array.isArray(dynamicInputs.prompt)
-              ? dynamicInputs.prompt[0]
-              : dynamicInputs.prompt;
-            const promptText = text || promptFromDynamic || null;
-            if (!promptText) {
-              logger.error('node.error', 'nanoBanana node missing text input', {
-                nodeId: node.id,
-              });
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Missing text input",
-              });
-              throw new Error("Missing text input");
-            }
-
-            updateNodeData(node.id, {
-              inputImages: images,
-              inputPrompt: promptText,
-              status: "loading",
-              error: null,
-            });
-
-            try {
-              // Get fresh node data from store (not stale data from sorted array)
-              const freshNode = get().nodes.find((n) => n.id === node.id);
-              const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
-              const providerSettingsState = get().providerSettings;
-
-              const requestPayload = {
-                images,
-                prompt: promptText,
-                aspectRatio: nodeData.aspectRatio,
-                resolution: nodeData.resolution,
-                model: nodeData.model,
-                useGoogleSearch: nodeData.useGoogleSearch,
-                selectedModel: nodeData.selectedModel,
-                parameters: nodeData.parameters,
-                dynamicInputs,  // Pass dynamic inputs for schema-mapped connections
-              };
-
-              // Build headers with API keys for providers
-              const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-              };
-              const provider = nodeData.selectedModel?.provider || "gemini";
-              if (provider === "gemini") {
-                const geminiConfig = providerSettingsState.providers.gemini;
-                if (geminiConfig?.apiKey) {
-                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-                }
-              } else if (provider === "replicate") {
-                const replicateConfig = providerSettingsState.providers.replicate;
-                if (replicateConfig?.apiKey) {
-                  headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
-                }
-              } else if (provider === "fal") {
-                const falConfig = providerSettingsState.providers.fal;
-                if (falConfig?.apiKey) {
-                  headers["X-Fal-API-Key"] = falConfig.apiKey;
-                }
-              } else if (provider === "kie") {
-                const kieConfig = providerSettingsState.providers.kie;
-                if (kieConfig?.apiKey) {
-                  headers["X-Kie-Key"] = kieConfig.apiKey;
-                }
-              } else if (provider === "wavespeed") {
-                const wavespeedConfig = providerSettingsState.providers.wavespeed;
-                if (wavespeedConfig?.apiKey) {
-                  headers["X-WaveSpeed-Key"] = wavespeedConfig.apiKey;
-                }
-              }
-
-              logger.info('node.execution', `Calling ${provider} API for image generation`, {
-                nodeId: node.id,
-                provider,
-                model: nodeData.selectedModel?.modelId || nodeData.model,
-                aspectRatio: nodeData.aspectRatio,
-                resolution: nodeData.resolution,
-                imageCount: images.length,
-                prompt: promptText,
-              });
-
-              const response = await fetch("/api/generate", {
-                method: "POST",
-                headers,
-                body: JSON.stringify(requestPayload),
-                signal,  // Pass abort signal for cancellation
-              });
-
-              if (!response.ok) {
-                const errorText = await response.text();
-                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                try {
-                  const errorJson = JSON.parse(errorText);
-                  errorMessage = errorJson.error || errorMessage;
-                } catch {
-                  if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-                }
-
-                logger.error('api.error', `${provider} API request failed`, {
-                  nodeId: node.id,
-                  provider,
-                  status: response.status,
-                  statusText: response.statusText,
-                  errorMessage,
-                });
-
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: errorMessage,
-                });
-                throw new Error(errorMessage);
-              }
-
-              const result = await response.json();
-
-              if (result.success && result.image) {
-                const timestamp = Date.now();
-                const imageId = `${timestamp}`;
-
-                // Save the newly generated image to global history
-                get().addToGlobalHistory({
-                  image: result.image,
-                  timestamp,
-                  prompt: promptText,
-                  aspectRatio: nodeData.aspectRatio,
-                  model: nodeData.model,
-                });
-
-                // Add to node's carousel history
-                const newHistoryItem = {
-                  id: imageId,
-                  timestamp,
-                  prompt: promptText,
-                  aspectRatio: nodeData.aspectRatio,
-                  model: nodeData.model,
-                };
-                const updatedHistory = [newHistoryItem, ...(nodeData.imageHistory || [])];
-
-                updateNodeData(node.id, {
-                  outputImage: result.image,
-                  status: "complete",
-                  error: null,
-                  imageHistory: updatedHistory,
-                  selectedHistoryIndex: 0,
-                });
-
-                // Push new image to connected downstream outputGallery nodes
-                get().edges
-                  .filter(e => e.source === node.id)
-                  .forEach(e => {
-                    const target = get().nodes.find(n => n.id === e.target);
-                    if (target?.type === "outputGallery") {
-                      const gData = target.data as OutputGalleryNodeData;
-                      updateNodeData(target.id, {
-                        images: [result.image, ...(gData.images || [])],
-                      });
-                    }
-                  });
-
-                // Track cost
-                // Cost tracking: Gemini (hardcoded), fal.ai (from API). Replicate excluded (no pricing API).
-                if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-                  // External fal.ai provider - use pricing from selectedModel
-                  get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-                } else if (!nodeData.selectedModel || nodeData.selectedModel.provider === "gemini") {
-                  // Legacy Gemini or Gemini via selectedModel - use hardcoded pricing
-                  const generationCost = calculateGenerationCost(nodeData.model, nodeData.resolution);
-                  get().addIncurredCost(generationCost);
-                }
-                // Note: Replicate has no pricing API, so costs are not tracked
-
-                // Auto-save to generations folder if configured
-                const genPath = get().generationsPath;
-                if (genPath) {
-                  trackSaveGeneration(genPath, { image: result.image }, text, imageId, node.id, 'image', get, updateNodeData);
-                }
-              } else {
-                logger.error('api.error', `${provider} API generation failed`, {
-                  nodeId: node.id,
-                  provider,
-                  error: result.error,
-                });
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: result.error || "Generation failed",
-                });
-                throw new Error(result.error || "Generation failed");
-              }
-            } catch (error) {
-              let errorMessage = "Generation failed";
-              if (error instanceof DOMException && error.name === 'AbortError') {
-                errorMessage = "Request timed out. Try reducing image sizes or using a simpler prompt.";
-              } else if (error instanceof TypeError && error.message.includes('NetworkError')) {
-                errorMessage = "Network error. Check your connection and try again.";
-              } else if (error instanceof TypeError) {
-                errorMessage = `Network error: ${error.message}`;
-              } else if (error instanceof Error) {
-                errorMessage = error.message;
-              }
-
-              const nodeData = node.data as NanoBananaNodeData;
-              const errorProvider = nodeData.selectedModel?.provider || "gemini";
-              logger.error('node.error', 'Generate node execution failed', {
-                nodeId: node.id,
-                provider: errorProvider,
-                errorMessage,
-              }, error instanceof Error ? error : undefined);
-
-              updateNodeData(node.id, {
-                status: "error",
-                error: errorMessage,
-              });
-              if (error instanceof DOMException && error.name === 'AbortError') throw error;
-              throw new Error(errorMessage);
-            }
+          case "prompt":
+            await executePrompt(executionCtx);
             break;
-          }
-
-          case "generateVideo": {
-            const { images, text, dynamicInputs } = getConnectedInputs(node.id);
-
-            // For dynamic inputs, check if we have at least a prompt
-            const hasPrompt = text || dynamicInputs.prompt || dynamicInputs.negative_prompt;
-            if (!hasPrompt && images.length === 0) {
-              logger.error('node.error', 'generateVideo node missing inputs', {
-                nodeId: node.id,
-              });
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Missing required inputs",
-              });
-              throw new Error("Missing required inputs");
-            }
-
-            // Get fresh node data from store (not stale data from sorted array)
-            const freshVideoNode = get().nodes.find((n) => n.id === node.id);
-            const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
-
-            if (!nodeData.selectedModel?.modelId) {
-              logger.error('node.error', 'generateVideo node missing model selection', {
-                nodeId: node.id,
-              });
-              updateNodeData(node.id, {
-                status: "error",
-                error: "No model selected",
-              });
-              throw new Error("No model selected");
-            }
-
-            updateNodeData(node.id, {
-              inputImages: images,
-              inputPrompt: text,
-              status: "loading",
-              error: null,
-            });
-
-            try {
-              const providerSettingsState = get().providerSettings;
-
-              const requestPayload = {
-                images,
-                prompt: text,
-                selectedModel: nodeData.selectedModel,
-                parameters: nodeData.parameters,
-                dynamicInputs,  // Pass dynamic inputs for schema-mapped connections
-                mediaType: "video" as const,  // Signal to API to use queue for long-running video generation
-              };
-
-              // Build headers with API keys for providers
-              const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-              };
-              const provider = nodeData.selectedModel.provider;
-              if (provider === "gemini") {
-                const geminiConfig = providerSettingsState.providers.gemini;
-                if (geminiConfig?.apiKey) {
-                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-                }
-              } else if (provider === "replicate") {
-                const replicateConfig = providerSettingsState.providers.replicate;
-                if (replicateConfig?.apiKey) {
-                  headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
-                }
-              } else if (provider === "fal") {
-                const falConfig = providerSettingsState.providers.fal;
-                if (falConfig?.apiKey) {
-                  headers["X-Fal-API-Key"] = falConfig.apiKey;
-                }
-              } else if (provider === "kie") {
-                const kieConfig = providerSettingsState.providers.kie;
-                if (kieConfig?.apiKey) {
-                  headers["X-Kie-Key"] = kieConfig.apiKey;
-                }
-              } else if (provider === "wavespeed") {
-                const wavespeedConfig = providerSettingsState.providers.wavespeed;
-                if (wavespeedConfig?.apiKey) {
-                  headers["X-WaveSpeed-Key"] = wavespeedConfig.apiKey;
-                }
-              }
-              logger.info('node.execution', `Calling ${provider} API for video generation`, {
-                nodeId: node.id,
-                provider,
-                model: nodeData.selectedModel.modelId,
-                imageCount: images.length,
-                prompt: text,
-              });
-
-              const response = await fetch("/api/generate", {
-                method: "POST",
-                headers,
-                body: JSON.stringify(requestPayload),
-                signal,  // Pass abort signal for cancellation
-              });
-
-              if (!response.ok) {
-                const errorText = await response.text();
-                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-                try {
-                  const errorJson = JSON.parse(errorText);
-                  errorMessage = errorJson.error || errorMessage;
-                } catch {
-                  if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-                }
-
-                logger.error('api.error', `${provider} API request failed`, {
-                  nodeId: node.id,
-                  provider,
-                  status: response.status,
-                  statusText: response.statusText,
-                  errorMessage,
-                });
-
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: errorMessage,
-                });
-                throw new Error(errorMessage);
-              }
-
-              const result = await response.json();
-
-              // Handle video response (video or videoUrl field)
-              const videoData = result.video || result.videoUrl;
-              if (result.success && videoData) {
-                const timestamp = Date.now();
-                const videoId = `${timestamp}`;
-
-                // Add to node's video history
-                const newHistoryItem = {
-                  id: videoId,
-                  timestamp,
-                  prompt: text || '',
-                  model: nodeData.selectedModel?.modelId || '',
-                };
-                const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
-
-                updateNodeData(node.id, {
-                  outputVideo: videoData,
-                  status: "complete",
-                  error: null,
-                  videoHistory: updatedHistory,
-                  selectedVideoHistoryIndex: 0,
-                });
-
-                // Track cost for video generation
-                // Cost tracking: fal.ai (from API). Replicate excluded (no pricing API).
-                if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-                  get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-                }
-                // Note: Replicate has no pricing API, so video costs are not tracked
-
-                // Auto-save video to generations folder if configured
-                const genPath = get().generationsPath;
-                if (genPath) {
-                  trackSaveGeneration(genPath, { video: videoData }, text, videoId, node.id, 'video', get, updateNodeData);
-                }
-              } else if (result.success && result.image) {
-                // Some models might return an image preview; treat as video for now
-                const timestamp = Date.now();
-                const videoId = `${timestamp}`;
-
-                // Add to node's video history
-                const newHistoryItem = {
-                  id: videoId,
-                  timestamp,
-                  prompt: text || '',
-                  model: nodeData.selectedModel?.modelId || '',
-                };
-                const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
-
-                updateNodeData(node.id, {
-                  outputVideo: result.image,
-                  status: "complete",
-                  error: null,
-                  videoHistory: updatedHistory,
-                  selectedVideoHistoryIndex: 0,
-                });
-
-                // Track cost for video generation (image fallback case)
-                // Cost tracking: fal.ai (from API). Replicate excluded (no pricing API).
-                if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-                  get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-                }
-
-                // Auto-save image preview to generations folder if configured
-                const genPath = get().generationsPath;
-                if (genPath) {
-                  trackSaveGeneration(genPath, { image: result.image }, text, videoId, node.id, 'video', get, updateNodeData);
-                }
-              } else {
-                logger.error('api.error', `${provider} API video generation failed`, {
-                  nodeId: node.id,
-                  provider,
-                  error: result.error,
-                });
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: result.error || "Video generation failed",
-                });
-                throw new Error(result.error || "Video generation failed");
-              }
-            } catch (error) {
-              let errorMessage = "Video generation failed";
-              if (error instanceof DOMException && error.name === 'AbortError') {
-                errorMessage = "Request timed out. Video generation may take longer.";
-              } else if (error instanceof TypeError && error.message.includes('NetworkError')) {
-                errorMessage = "Network error. Check your connection and try again.";
-              } else if (error instanceof TypeError) {
-                errorMessage = `Network error: ${error.message}`;
-              } else if (error instanceof Error) {
-                errorMessage = error.message;
-              }
-
-              logger.error('node.error', 'GenerateVideo node execution failed', {
-                nodeId: node.id,
-                provider: nodeData.selectedModel?.provider,
-                errorMessage,
-              }, error instanceof Error ? error : undefined);
-
-              updateNodeData(node.id, {
-                status: "error",
-                error: errorMessage,
-              });
-              if (error instanceof DOMException && error.name === 'AbortError') throw error;
-              throw new Error(errorMessage);
-            }
+          case "array":
+            await executeArray(executionCtx);
             break;
-          }
-
-          case "llmGenerate": {
-            const inputs = getConnectedInputs(node.id);
-            const images = inputs.images;
-            const llmData = node.data as LLMGenerateNodeData;
-            // Fall back to node's internal inputPrompt if no text connection
-            const text = inputs.text ?? llmData.inputPrompt;
-
-            if (!text) {
-              logger.error('node.error', 'llmGenerate node missing text input', {
-                nodeId: node.id,
-              });
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Missing text input - connect a prompt node or set internal prompt",
-              });
-              throw new Error("Missing text input");
-            }
-
-            updateNodeData(node.id, {
-              inputPrompt: text,
-              inputImages: images,
-              status: "loading",
-              error: null,
-            });
-
-            try {
-              const nodeData = node.data as LLMGenerateNodeData;
-              const providerSettingsState = get().providerSettings;
-
-              // Build headers with API keys for LLM providers
-              const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-              };
-              if (nodeData.provider === "google") {
-                const geminiConfig = providerSettingsState.providers.gemini;
-                if (geminiConfig?.apiKey) {
-                  headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-                }
-              } else if (nodeData.provider === "openai") {
-                const openaiConfig = providerSettingsState.providers.openai;
-                if (openaiConfig?.apiKey) {
-                  headers["X-OpenAI-API-Key"] = openaiConfig.apiKey;
-                }
-              }
-
-              logger.info('api.llm', 'Calling LLM API', {
-                nodeId: node.id,
-                provider: nodeData.provider,
-                model: nodeData.model,
-                temperature: nodeData.temperature,
-                maxTokens: nodeData.maxTokens,
-                hasImages: images.length > 0,
-                prompt: text,
-              });
-
-              const response = await fetch("/api/llm", {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                  prompt: text,
-                  ...(images.length > 0 && { images }),
-                  provider: nodeData.provider,
-                  model: nodeData.model,
-                  temperature: nodeData.temperature,
-                  maxTokens: nodeData.maxTokens,
-                }),
-                signal,  // Pass abort signal for cancellation
-              });
-
-              if (!response.ok) {
-                const errorText = await response.text();
-                let errorMessage = `HTTP ${response.status}`;
-                try {
-                  const errorJson = JSON.parse(errorText);
-                  errorMessage = errorJson.error || errorMessage;
-                } catch {
-                  if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-                }
-                logger.error('api.error', 'LLM API request failed', {
-                  nodeId: node.id,
-                  status: response.status,
-                  errorMessage,
-                });
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: errorMessage,
-                });
-                throw new Error(errorMessage);
-              }
-
-              const result = await response.json();
-
-              if (result.success && result.text) {
-                updateNodeData(node.id, {
-                  outputText: result.text,
-                  status: "complete",
-                  error: null,
-                });
-              } else {
-                logger.error('api.error', 'LLM generation failed', {
-                  nodeId: node.id,
-                  error: result.error,
-                });
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: result.error || "LLM generation failed",
-                });
-                throw new Error(result.error || "LLM generation failed");
-              }
-            } catch (error) {
-              logger.error('node.error', 'llmGenerate node execution failed', {
-                nodeId: node.id,
-              }, error instanceof Error ? error : undefined);
-              updateNodeData(node.id, {
-                status: "error",
-                error: error instanceof Error ? error.message : "LLM generation failed",
-              });
-              if (error instanceof DOMException && error.name === 'AbortError') throw error;
-              throw error instanceof Error ? error : new Error("LLM generation failed");
-            }
+          case "promptConstructor":
+            await executePromptConstructor(executionCtx);
             break;
-          }
-
-          case "splitGrid": {
-            const { images } = getConnectedInputs(node.id);
-            const sourceImage = images[0] || null;
-
-            if (!sourceImage) {
-              updateNodeData(node.id, {
-                status: "error",
-                error: "No input image connected",
-              });
-              throw new Error("No input image connected");
-            }
-
-            const nodeData = node.data as SplitGridNodeData;
-
-            if (!nodeData.isConfigured) {
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Node not configured - open settings first",
-              });
-              throw new Error("Node not configured - open settings first");
-            }
-
-            updateNodeData(node.id, {
-              sourceImage,
-              status: "loading",
-              error: null,
-            });
-
-            try {
-              // Import and use the grid splitter
-              const { splitWithDimensions } = await import("@/utils/gridSplitter");
-              const { images: splitImages } = await splitWithDimensions(
-                sourceImage,
-                nodeData.gridRows,
-                nodeData.gridCols
-              );
-
-              // Populate child imageInput nodes with split images
-              for (let index = 0; index < nodeData.childNodeIds.length; index++) {
-                const childSet = nodeData.childNodeIds[index];
-                if (splitImages[index]) {
-                  // Create a promise to get image dimensions
-                  await new Promise<void>((resolve) => {
-                    const img = new Image();
-                    img.onload = () => {
-                      updateNodeData(childSet.imageInput, {
-                        image: splitImages[index],
-                        filename: `split-${Math.floor(index / nodeData.gridCols) + 1}-${(index % nodeData.gridCols) + 1}.png`,
-                        dimensions: { width: img.width, height: img.height },
-                      });
-                      resolve();
-                    };
-                    img.onerror = () => resolve();
-                    img.src = splitImages[index];
-                  });
-                }
-              }
-
-              updateNodeData(node.id, { status: "complete", error: null });
-            } catch (error) {
-              logger.error('node.error', 'splitGrid node execution failed', {
-                nodeId: node.id,
-              }, error instanceof Error ? error : undefined);
-              updateNodeData(node.id, {
-                status: "error",
-                error: error instanceof Error ? error.message : "Failed to split image",
-              });
-              if (error instanceof DOMException && error.name === 'AbortError') throw error;
-              throw error instanceof Error ? error : new Error("Failed to split image");
-            }
+          case "nanoBanana":
+            await executeNanoBanana(executionCtx);
             break;
-          }
-
-          case "output": {
-            const { images, videos } = getConnectedInputs(node.id);
-
-            // Check videos array first (typed data from source)
-            if (videos.length > 0) {
-              const videoContent = videos[0];
-              updateNodeData(node.id, {
-                image: videoContent,
-                video: videoContent,
-                contentType: "video"
-              });
-
-              // Save to /outputs directory if we have a project path
-              const { saveDirectoryPath } = get();
-              if (saveDirectoryPath) {
-                const outputNodeData = node.data as OutputNodeData;
-                const outputsPath = `${saveDirectoryPath}/outputs`;
-
-                // Fire and forget - don't block workflow execution
-                fetch("/api/save-generation", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    directoryPath: outputsPath,
-                    video: videoContent,
-                    customFilename: outputNodeData.outputFilename || undefined,
-                    createDirectory: true, // Create /outputs if it doesn't exist
-                  }),
-                }).catch((err) => {
-                  console.error("Failed to save output:", err);
-                });
-              }
-            } else if (images.length > 0) {
-              const content = images[0];
-              // Fallback pattern matching for edge cases (video data that ended up in images array)
-              const isVideoContent =
-                content.startsWith("data:video/") ||
-                content.includes(".mp4") ||
-                content.includes(".webm") ||
-                content.includes("fal.media");  // fal.ai video URLs
-
-              if (isVideoContent) {
-                updateNodeData(node.id, {
-                  image: content,
-                  video: content,
-                  contentType: "video"
-                });
-              } else {
-                updateNodeData(node.id, {
-                  image: content,
-                  video: null,
-                  contentType: "image"
-                });
-              }
-
-              // Save to /outputs directory if we have a project path
-              const { saveDirectoryPath } = get();
-              if (saveDirectoryPath) {
-                const outputNodeData = node.data as OutputNodeData;
-                const outputsPath = `${saveDirectoryPath}/outputs`;
-
-                // Fire and forget - don't block workflow execution
-                fetch("/api/save-generation", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    directoryPath: outputsPath,
-                    image: isVideoContent ? undefined : content,
-                    video: isVideoContent ? content : undefined,
-                    customFilename: outputNodeData.outputFilename || undefined,
-                    createDirectory: true, // Create /outputs if it doesn't exist
-                  }),
-                }).catch((err) => {
-                  console.error("Failed to save output:", err);
-                });
-              }
-            }
+          case "generateVideo":
+            await executeGenerateVideo(executionCtx);
             break;
-          }
-
-          case "outputGallery": {
-            const { images } = getConnectedInputs(node.id);
-            const galleryData = node.data as OutputGalleryNodeData;
-            const existing = new Set(galleryData.images || []);
-            const newImages = images.filter(img => !existing.has(img));
-            if (newImages.length > 0) {
-              updateNodeData(node.id, {
-                images: [...newImages, ...(galleryData.images || [])],
-              });
-            }
+          case "generate3d":
+            await executeGenerate3D(executionCtx);
             break;
-          }
-
-          case "imageCompare": {
-            const { images } = getConnectedInputs(node.id);
-            updateNodeData(node.id, {
-              imageA: images[0] || null,
-              imageB: images[1] || null,
-            });
+          case "generateAudio":
+            await executeGenerateAudio(executionCtx);
             break;
-          }
-
-          case "videoStitch": {
-            const nodeData = node.data as VideoStitchNodeData;
-
-            // Check encoder support
-            if (nodeData.encoderSupported === false) {
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Browser does not support video encoding",
-                progress: 0,
-              });
-              break;
-            }
-
-            updateNodeData(node.id, { status: "loading", progress: 0, error: null });
-
-            try {
-              const inputs = getConnectedInputs(node.id);
-
-              if (inputs.videos.length < 2) {
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: "Need at least 2 video clips to stitch",
-                  progress: 0,
-                });
-                break;
-              }
-
-              // Convert video data/blob URLs to Blobs
-              const videoBlobs = await Promise.all(
-                inputs.videos.map((v) => fetch(v).then((r) => r.blob()))
-              );
-
-              // Duplicate blobs based on loopCount (2x or 3x repeats the sequence)
-              // Each copy must be a new Blob so BlobSource can read it independently
-              const loopCount = nodeData.loopCount || 1;
-              const loopedBlobs = loopCount > 1
-                ? Array.from({ length: loopCount }, () =>
-                    videoBlobs.map((b) => new Blob([b], { type: b.type }))
-                  ).flat()
-                : videoBlobs;
-
-              // Prepare audio if connected
-              let audioData = null;
-              if (inputs.audio.length > 0 && inputs.audio[0]) {
-                const { prepareAudioAsync } = await import('@/hooks/useAudioMixing');
-                const audioUrl = inputs.audio[0];
-                const audioResponse = await fetch(audioUrl);
-                const rawBlob = await audioResponse.blob();
-                // Ensure the blob has the correct MIME type for MediaBunny format detection
-                // Data URLs from AudioInput preserve the original MIME type, but fetch() may lose it
-                const audioMime = rawBlob.type || (audioUrl.startsWith('data:') ? audioUrl.split(';')[0].split(':')[1] : 'audio/mpeg');
-                const audioBlob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: audioMime });
-                audioData = await prepareAudioAsync(audioBlob, 0);
-              }
-
-              // Stitch videos
-              const { stitchVideosAsync } = await import('@/hooks/useStitchVideos');
-              const outputBlob = await stitchVideosAsync(
-                loopedBlobs,
-                audioData,
-                (progress) => {
-                  updateNodeData(node.id, { progress: progress.progress });
-                }
-              );
-
-              // Revoke old blob URL before replacing
-              revokeBlobUrl((node.data as Record<string, unknown>).outputVideo as string | undefined);
-
-              // Store output - blob URL for large files, data URL for small
-              let outputVideo: string;
-              if (outputBlob.size > 20 * 1024 * 1024) {
-                // Large file: use blob URL
-                outputVideo = URL.createObjectURL(outputBlob);
-              } else {
-                // Small file: convert to data URL for workflow saving
-                const reader = new FileReader();
-                outputVideo = await new Promise<string>((resolve) => {
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.readAsDataURL(outputBlob);
-                });
-              }
-
-              updateNodeData(node.id, {
-                outputVideo,
-                status: "complete",
-                progress: 100,
-                error: null,
-              });
-            } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : "Stitch failed";
-              updateNodeData(node.id, {
-                status: "error",
-                error: errorMessage,
-                progress: 0,
-              });
-            }
+          case "llmGenerate":
+            await executeLlmGenerate(executionCtx);
             break;
-          }
-
-          case "easeCurve": {
-            const nodeData = node.data as EaseCurveNodeData;
-
-            // Check encoder support
-            if (nodeData.encoderSupported === false) {
-              updateNodeData(node.id, {
-                status: "error",
-                error: "Browser does not support video encoding",
-                progress: 0,
-              });
-              break;
-            }
-
-            updateNodeData(node.id, { status: "loading", progress: 0, error: null });
-
-            try {
-              const inputs = getConnectedInputs(node.id);
-
-              // Propagate parent easeCurve settings if inherited
-              let activeBezierHandles = nodeData.bezierHandles;
-              let activeEasingPreset = nodeData.easingPreset;
-              if (inputs.easeCurve) {
-                activeBezierHandles = inputs.easeCurve.bezierHandles;
-                activeEasingPreset = inputs.easeCurve.easingPreset;
-                const easeCurveSourceId = edges.filter(
-                  (e) => e.target === node.id && e.targetHandle === "easeCurve"
-                )[0]?.source ?? null;
-                updateNodeData(node.id, {
-                  bezierHandles: activeBezierHandles,
-                  easingPreset: activeEasingPreset,
-                  inheritedFrom: easeCurveSourceId,
-                });
-              }
-
-              if (inputs.videos.length === 0) {
-                updateNodeData(node.id, {
-                  status: "error",
-                  error: "Connect a video input to apply ease curve",
-                  progress: 0,
-                });
-                break;
-              }
-
-              // Get the first connected video (EaseCurve takes single video input)
-              const videoUrl = inputs.videos[0];
-              const videoBlob = await fetch(videoUrl).then((r) => r.blob());
-
-              // Get video duration for warpTime input
-              const videoDuration = await new Promise<number>((resolve) => {
-                const video = document.createElement("video");
-                video.preload = "metadata";
-                video.onloadedmetadata = () => {
-                  resolve(video.duration);
-                  URL.revokeObjectURL(video.src);
-                };
-                video.onerror = () => {
-                  resolve(5); // Fallback to 5 seconds
-                  URL.revokeObjectURL(video.src);
-                };
-                video.src = URL.createObjectURL(videoBlob);
-              });
-
-              // Determine easing function: use named preset if set, otherwise create from Bezier handles
-              let easingFunction: string | ((t: number) => number);
-              if (activeEasingPreset) {
-                easingFunction = activeEasingPreset;
-              } else {
-                const { createBezierEasing } = await import('@/lib/easing-functions');
-                easingFunction = createBezierEasing(
-                  activeBezierHandles[0],
-                  activeBezierHandles[1],
-                  activeBezierHandles[2],
-                  activeBezierHandles[3]
-                );
-              }
-
-              // Apply speed curve
-              const { applySpeedCurveAsync } = await import('@/hooks/useApplySpeedCurve');
-              const outputBlob = await applySpeedCurveAsync(
-                videoBlob,
-                videoDuration,
-                nodeData.outputDuration,
-                (progress) => {
-                  updateNodeData(node.id, { progress: progress.progress });
-                },
-                easingFunction
-              );
-
-              if (!outputBlob) {
-                throw new Error("Speed curve processing returned no output");
-              }
-
-              // Revoke old blob URL before replacing
-              revokeBlobUrl((node.data as Record<string, unknown>).outputVideo as string | undefined);
-
-              // Store output - blob URL for large files, data URL for small
-              let outputVideo: string;
-              if (outputBlob.size > 20 * 1024 * 1024) {
-                outputVideo = URL.createObjectURL(outputBlob);
-              } else {
-                const reader = new FileReader();
-                outputVideo = await new Promise<string>((resolve) => {
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.readAsDataURL(outputBlob);
-                });
-              }
-
-              updateNodeData(node.id, {
-                outputVideo,
-                status: "complete",
-                progress: 100,
-                error: null,
-              });
-            } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : "Ease curve processing failed";
-              updateNodeData(node.id, {
-                status: "error",
-                error: errorMessage,
-                progress: 0,
-              });
-            }
+          case "splitGrid":
+            await executeSplitGrid(executionCtx);
             break;
-          }
+          case "output":
+            await executeOutput(executionCtx);
+            break;
+          case "outputGallery":
+            await executeOutputGallery(executionCtx);
+            break;
+          case "imageCompare":
+            await executeImageCompare(executionCtx);
+            break;
+          case "videoStitch":
+            await executeVideoStitch(executionCtx);
+            break;
+          case "easeCurve":
+            await executeEaseCurve(executionCtx);
+            break;
+          case "videoTrim":
+            await executeVideoTrim(executionCtx);
+            break;
+          case "videoFrameGrab":
+            await executeVideoFrameGrab(executionCtx);
+            break;
         }
     }; // End of executeSingleNode helper
 
@@ -2263,21 +1044,21 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             batch.map((node) => executeSingleNode(node, abortController.signal))
           );
 
-          // Check for failures (fail-fast behavior)
-          const failed = results.find(
-            (r): r is PromiseRejectedResult =>
-              r.status === 'rejected' &&
-              !(r.reason instanceof DOMException && r.reason.name === 'AbortError')
-          );
-
-          if (failed) {
-            // Log the failure and abort remaining executions
-            logger.error('workflow.error', 'Node execution failed in parallel batch', {
-              level: levelIdx,
-              error: failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
-            });
-            abortController.abort();
-            throw failed.reason;
+          // Check for failures with node context (fail-fast behavior)
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.status === 'rejected' &&
+                !(r.reason instanceof DOMException && r.reason.name === 'AbortError')) {
+              const failedNode = batch[i];
+              logger.error('workflow.error', 'Node execution failed in parallel batch', {
+                level: levelIdx,
+                nodeId: failedNode.id,
+                nodeType: failedNode.type,
+                error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+              });
+              abortController.abort();
+              throw r.reason;
+            }
           }
         }
       }
@@ -2289,19 +1070,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
-      // Save logs to server
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     } catch (error) {
       // Handle AbortError gracefully (user cancelled)
@@ -2317,19 +1086,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       }
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
-      // Save logs to server (even on error)
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     }
   },
@@ -2338,7 +1095,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     // Abort any in-flight requests
     const controller = get()._abortController;
     if (controller) {
-      controller.abort();
+      controller.abort("user-cancelled");
     }
     set({ isRunning: false, currentNodeIds: [], _abortController: null });
   },
@@ -2350,7 +1107,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   regenerateNode: async (nodeId: string) => {
-    const { nodes, updateNodeData, getConnectedInputs, isRunning } = get();
+    const { nodes, updateNodeData, isRunning } = get();
 
     if (isRunning) {
       logger.warn('node.execution', 'Cannot regenerate node, workflow already running', { nodeId });
@@ -2372,806 +1129,74 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     });
 
     try {
+      const executionCtx = get()._buildExecutionContext(node);
+
+      const regenOptions = { useStoredFallback: true };
+
       if (node.type === "nanoBanana") {
-        // Get fresh node data from store
-        const freshNode = get().nodes.find((n) => n.id === nodeId);
-        const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
-        const providerSettingsState = get().providerSettings;
-        const provider = nodeData.selectedModel?.provider || "gemini";
-
-        // Always get fresh connected inputs first, fall back to stored inputs only if not connected
-        const { images: connectedImages, text: connectedText, dynamicInputs } = getConnectedInputs(nodeId);
-        const images = connectedImages.length > 0 ? connectedImages : nodeData.inputImages;
-        const text = connectedText ?? nodeData.inputPrompt;
-
-        if (!text) {
-          logger.error('node.error', 'Generate node regeneration failed: missing text input', {
-            nodeId,
-            provider,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Missing text input",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, {
-          status: "loading",
-          error: null,
-        });
-
-        // Build headers with API keys for providers
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (provider === "gemini") {
-          const geminiConfig = providerSettingsState.providers.gemini;
-          if (geminiConfig?.apiKey) {
-            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-          }
-        } else if (provider === "replicate") {
-          const replicateConfig = providerSettingsState.providers.replicate;
-          if (replicateConfig?.apiKey) {
-            headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
-          }
-        } else if (provider === "fal") {
-          const falConfig = providerSettingsState.providers.fal;
-          if (falConfig?.apiKey) {
-            headers["X-Fal-API-Key"] = falConfig.apiKey;
-          }
-        } else if (provider === "kie") {
-          const kieConfig = providerSettingsState.providers.kie;
-          if (kieConfig?.apiKey) {
-            headers["X-Kie-Key"] = kieConfig.apiKey;
-          }
-        } else if (provider === "wavespeed") {
-          const wavespeedConfig = providerSettingsState.providers.wavespeed;
-          if (wavespeedConfig?.apiKey) {
-            headers["X-WaveSpeed-Key"] = wavespeedConfig.apiKey;
-          }
-        }
-
-        logger.info('node.execution', `Calling ${provider} API for node regeneration`, {
-          nodeId,
-          provider,
-          model: nodeData.selectedModel?.modelId || nodeData.model,
-          aspectRatio: nodeData.aspectRatio,
-          resolution: nodeData.resolution,
-          imageCount: images.length,
-          prompt: text,
-        });
-
-        const response = await fetch("/api/generate", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            images,
-            prompt: text,
-            aspectRatio: nodeData.aspectRatio,
-            resolution: nodeData.resolution,
-            model: nodeData.model,
-            useGoogleSearch: nodeData.useGoogleSearch,
-            selectedModel: nodeData.selectedModel,
-            parameters: nodeData.parameters,
-            dynamicInputs,  // Pass dynamic inputs for schema-mapped connections
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = `HTTP ${response.status}`;
-          try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.error || errorMessage;
-          } catch {
-            if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-          }
-          logger.error('api.error', `${provider} API regeneration failed`, {
-            nodeId,
-            provider,
-            status: response.status,
-            errorMessage,
-          });
-          updateNodeData(nodeId, { status: "error", error: errorMessage });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        const result = await response.json();
-        if (result.success && result.image) {
-          const timestamp = Date.now();
-          const imageId = `${timestamp}`;
-
-          // Save the newly generated image to global history
-          get().addToGlobalHistory({
-            image: result.image,
-            timestamp,
-            prompt: text,
-            aspectRatio: nodeData.aspectRatio,
-            model: nodeData.model,
-          });
-
-          // Add to node's carousel history
-          const newHistoryItem = {
-            id: imageId,
-            timestamp,
-            prompt: text,
-            aspectRatio: nodeData.aspectRatio,
-            model: nodeData.model,
-          };
-          const updatedHistory = [newHistoryItem, ...(nodeData.imageHistory || [])];
-
-          updateNodeData(nodeId, {
-            outputImage: result.image,
-            status: "complete",
-            error: null,
-            imageHistory: updatedHistory,
-            selectedHistoryIndex: 0,
-          });
-
-          // Push new image to connected downstream outputGallery nodes
-          get().edges
-            .filter(e => e.source === nodeId)
-            .forEach(e => {
-              const target = get().nodes.find(n => n.id === e.target);
-              if (target?.type === "outputGallery") {
-                const gData = target.data as OutputGalleryNodeData;
-                updateNodeData(target.id, {
-                  images: [result.image, ...(gData.images || [])],
-                });
-              }
-            });
-
-          // Track cost
-          // Cost tracking: Gemini (hardcoded), fal.ai (from API). Replicate excluded (no pricing API).
-          if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-            get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-          } else if (!nodeData.selectedModel || nodeData.selectedModel.provider === "gemini") {
-            const generationCost = calculateGenerationCost(nodeData.model, nodeData.resolution);
-            get().addIncurredCost(generationCost);
-          }
-
-          // Auto-save to generations folder if configured
-          const genPath = get().generationsPath;
-          if (genPath) {
-            trackSaveGeneration(genPath, { image: result.image }, text, imageId, nodeId, 'image', get, updateNodeData);
-          }
-        } else {
-          updateNodeData(nodeId, {
-            status: "error",
-            error: result.error || "Generation failed",
-          });
-        }
+        await executeNanoBanana(executionCtx, regenOptions);
+      } else if (node.type === "array") {
+        await executeArray(executionCtx);
       } else if (node.type === "llmGenerate") {
-        const nodeData = node.data as LLMGenerateNodeData;
-
-        // Always get fresh connected inputs first, fall back to stored inputs only if not connected
-        const inputs = getConnectedInputs(nodeId);
-        const images = inputs.images.length > 0 ? inputs.images : nodeData.inputImages;
-        const text = inputs.text ?? nodeData.inputPrompt;
-
-        if (!text) {
-          logger.error('node.error', 'llmGenerate regeneration failed: missing text input', {
-            nodeId,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Missing text input",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, {
-          inputImages: images,
-          status: "loading",
-          error: null,
-        });
-
-        const providerSettingsState = get().providerSettings;
-
-        // Build headers with API keys for LLM providers
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (nodeData.provider === "google") {
-          const geminiConfig = providerSettingsState.providers.gemini;
-          if (geminiConfig?.apiKey) {
-            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-          }
-        } else if (nodeData.provider === "openai") {
-          const openaiConfig = providerSettingsState.providers.openai;
-          if (openaiConfig?.apiKey) {
-            headers["X-OpenAI-API-Key"] = openaiConfig.apiKey;
-          }
-        }
-
-        logger.info('api.llm', 'Calling LLM API for node regeneration', {
-          nodeId,
-          provider: nodeData.provider,
-          model: nodeData.model,
-          temperature: nodeData.temperature,
-          maxTokens: nodeData.maxTokens,
-          hasImages: images.length > 0,
-          prompt: text,
-        });
-
-        const response = await fetch("/api/llm", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            prompt: text,
-            ...(images.length > 0 && { images }),
-            provider: nodeData.provider,
-            model: nodeData.model,
-            temperature: nodeData.temperature,
-            maxTokens: nodeData.maxTokens,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = `HTTP ${response.status}`;
-          try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.error || errorMessage;
-          } catch {
-            if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-          }
-          logger.error('api.error', 'LLM API regeneration failed', {
-            nodeId,
-            status: response.status,
-            errorMessage,
-          });
-          updateNodeData(nodeId, { status: "error", error: errorMessage });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        const result = await response.json();
-        if (result.success && result.text) {
-          updateNodeData(nodeId, {
-            outputText: result.text,
-            status: "complete",
-            error: null,
-          });
-        } else {
-          logger.error('api.error', 'LLM regeneration failed', {
-            nodeId,
-            error: result.error,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: result.error || "LLM generation failed",
-          });
-        }
+        await executeLlmGenerate(executionCtx, regenOptions);
       } else if (node.type === "generateVideo") {
-        // Get fresh node data from store
-        const freshVideoNode = get().nodes.find((n) => n.id === nodeId);
-        const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
-        const providerSettingsState = get().providerSettings;
-
-        // Get fresh connected inputs
-        const { images: connectedImages, text: connectedText, dynamicInputs } = getConnectedInputs(nodeId);
-        const images = connectedImages.length > 0 ? connectedImages : nodeData.inputImages;
-        const text = connectedText ?? nodeData.inputPrompt;
-
-        if (!text) {
-          logger.error('node.error', 'generateVideo regeneration failed: missing text input', {
-            nodeId,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Missing text input",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        if (!nodeData.selectedModel?.modelId) {
-          logger.error('node.error', 'generateVideo regeneration failed: no model selected', {
-            nodeId,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "No model selected",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, {
-          inputImages: images,
-          status: "loading",
-          error: null,
-        });
-
-        // Build headers with API keys for providers
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        const provider = nodeData.selectedModel.provider;
-        if (provider === "gemini") {
-          const geminiConfig = providerSettingsState.providers.gemini;
-          if (geminiConfig?.apiKey) {
-            headers["X-Gemini-API-Key"] = geminiConfig.apiKey;
-          }
-        } else if (provider === "replicate") {
-          const replicateConfig = providerSettingsState.providers.replicate;
-          if (replicateConfig?.apiKey) {
-            headers["X-Replicate-API-Key"] = replicateConfig.apiKey;
-          }
-        } else if (provider === "fal") {
-          const falConfig = providerSettingsState.providers.fal;
-          if (falConfig?.apiKey) {
-            headers["X-Fal-API-Key"] = falConfig.apiKey;
-          }
-        } else if (provider === "kie") {
-          const kieConfig = providerSettingsState.providers.kie;
-          if (kieConfig?.apiKey) {
-            headers["X-Kie-Key"] = kieConfig.apiKey;
-          }
-        } else if (provider === "wavespeed") {
-          const wavespeedConfig = providerSettingsState.providers.wavespeed;
-          if (wavespeedConfig?.apiKey) {
-            headers["X-WaveSpeed-Key"] = wavespeedConfig.apiKey;
-          }
-        }
-        logger.info('node.execution', `Calling ${provider} API for video regeneration`, {
-          nodeId,
-          provider,
-          model: nodeData.selectedModel.modelId,
-          imageCount: images.length,
-          prompt: text,
-        });
-
-        const response = await fetch("/api/generate", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            images,
-            prompt: text,
-            selectedModel: nodeData.selectedModel,
-            parameters: nodeData.parameters,
-            dynamicInputs,
-            mediaType: "video",  // Signal to API to use queue for long-running video generation
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = `HTTP ${response.status}`;
-          try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.error || errorMessage;
-          } catch {
-            if (errorText) errorMessage += ` - ${errorText.substring(0, 200)}`;
-          }
-          logger.error('api.error', `${provider} API video regeneration failed`, {
-            nodeId,
-            provider,
-            status: response.status,
-            errorMessage,
-          });
-          updateNodeData(nodeId, { status: "error", error: errorMessage });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        const result = await response.json();
-        const videoData = result.video || result.videoUrl;
-        if (result.success && videoData) {
-          const timestamp = Date.now();
-          const videoId = `${timestamp}`;
-
-          // Add to node's video history
-          const newHistoryItem = {
-            id: videoId,
-            timestamp,
-            prompt: text || '',
-            model: nodeData.selectedModel?.modelId || '',
-          };
-          const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
-
-          updateNodeData(nodeId, {
-            outputVideo: videoData,
-            status: "complete",
-            error: null,
-            videoHistory: updatedHistory,
-            selectedVideoHistoryIndex: 0,
-          });
-
-          // Track cost for video regeneration
-          // Cost tracking: fal.ai (from API). Replicate excluded (no pricing API).
-          if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-            get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-          }
-
-          // Auto-save video to generations folder if configured
-          const genPath = get().generationsPath;
-          if (genPath) {
-            trackSaveGeneration(genPath, { video: videoData }, text, videoId, nodeId, 'video', get, updateNodeData);
-          }
-        } else if (result.success && result.image) {
-          const timestamp = Date.now();
-          const videoId = `${timestamp}`;
-
-          // Add to node's video history
-          const newHistoryItem = {
-            id: videoId,
-            timestamp,
-            prompt: text || '',
-            model: nodeData.selectedModel?.modelId || '',
-          };
-          const updatedHistory = [newHistoryItem, ...(nodeData.videoHistory || [])].slice(0, 50);
-
-          updateNodeData(nodeId, {
-            outputVideo: result.image,
-            status: "complete",
-            error: null,
-            videoHistory: updatedHistory,
-            selectedVideoHistoryIndex: 0,
-          });
-
-          // Track cost for video regeneration (image fallback case)
-          // Cost tracking: fal.ai (from API). Replicate excluded (no pricing API).
-          if (nodeData.selectedModel?.provider === "fal" && nodeData.selectedModel?.pricing) {
-            get().addIncurredCost(nodeData.selectedModel.pricing.amount);
-          }
-
-          // Auto-save image preview to generations folder if configured
-          const genPath = get().generationsPath;
-          if (genPath) {
-            trackSaveGeneration(genPath, { image: result.image }, text, videoId, nodeId, 'video', get, updateNodeData);
-          }
-        } else {
-          logger.error('api.error', `${provider} API video regeneration failed`, {
-            nodeId,
-            provider,
-            error: result.error,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: result.error || "Video generation failed",
-          });
-        }
+        await executeGenerateVideo(executionCtx, regenOptions);
+      } else if (node.type === "generate3d") {
+        await executeGenerate3D(executionCtx, regenOptions);
+      } else if (node.type === "generateAudio") {
+        await executeGenerateAudio(executionCtx, regenOptions);
       } else if (node.type === "splitGrid") {
-        const nodeData = node.data as SplitGridNodeData;
-
-        // Get fresh connected inputs
-        const inputs = getConnectedInputs(nodeId);
-        const sourceImage = inputs.images[0] || null;
-
-        if (!sourceImage) {
-          logger.error('node.error', 'splitGrid regeneration failed: no input image', {
-            nodeId,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "No input image connected",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        if (!nodeData.isConfigured) {
-          logger.error('node.error', 'splitGrid regeneration failed: not configured', {
-            nodeId,
-          });
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Node not configured - open settings first",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, {
-          sourceImage,
-          status: "loading",
-          error: null,
-        });
-
-        logger.info('node.execution', 'Splitting grid manually', {
-          nodeId,
-          gridRows: nodeData.gridRows,
-          gridCols: nodeData.gridCols,
-          childCount: nodeData.childNodeIds.length,
-        });
-
-        try {
-          // Import and use the grid splitter
-          const { splitWithDimensions } = await import("@/utils/gridSplitter");
-          const { images: splitImages } = await splitWithDimensions(
-            sourceImage,
-            nodeData.gridRows,
-            nodeData.gridCols
-          );
-
-          // Populate child imageInput nodes with split images
-          for (let index = 0; index < nodeData.childNodeIds.length; index++) {
-            const childSet = nodeData.childNodeIds[index];
-            if (splitImages[index]) {
-              // Create a promise to get image dimensions
-              await new Promise<void>((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                  updateNodeData(childSet.imageInput, {
-                    image: splitImages[index],
-                    filename: `split-${Math.floor(index / nodeData.gridCols) + 1}-${(index % nodeData.gridCols) + 1}.png`,
-                    dimensions: { width: img.width, height: img.height },
-                  });
-                  resolve();
-                };
-                img.onerror = () => resolve();
-                img.src = splitImages[index];
-              });
-            }
-          }
-
-          logger.info('node.execution', 'Grid split completed successfully', {
-            nodeId,
-            splitCount: splitImages.length,
-          });
-          updateNodeData(nodeId, { status: "complete", error: null });
-        } catch (error) {
-          logger.error('node.error', 'splitGrid manual execution failed', {
-            nodeId,
-          }, error instanceof Error ? error : undefined);
-          updateNodeData(nodeId, {
-            status: "error",
-            error: error instanceof Error ? error.message : "Failed to split image",
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
+        await executeSplitGrid(executionCtx);
       } else if (node.type === "videoStitch") {
-        const nodeData = node.data as VideoStitchNodeData;
-
-        if (nodeData.encoderSupported === false) {
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Browser does not support video encoding",
-            progress: 0,
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, { status: "loading", progress: 0, error: null });
-
-        try {
-          const inputs = getConnectedInputs(nodeId);
-
-          if (inputs.videos.length < 2) {
-            updateNodeData(nodeId, {
-              status: "error",
-              error: "Need at least 2 video clips to stitch",
-              progress: 0,
-            });
-            set({ isRunning: false, currentNodeIds: [] });
-            await logger.endSession();
-            return;
-          }
-
-          const videoBlobs = await Promise.all(
-            inputs.videos.map((v) => fetch(v).then((r) => r.blob()))
-          );
-
-          // Duplicate blobs based on loopCount (2x or 3x repeats the sequence)
-          const loopCount = nodeData.loopCount || 1;
-          const loopedBlobs = loopCount > 1
-            ? Array.from({ length: loopCount }, () =>
-                videoBlobs.map((b) => new Blob([b], { type: b.type }))
-              ).flat()
-            : videoBlobs;
-
-          let audioData = null;
-          if (inputs.audio.length > 0 && inputs.audio[0]) {
-            const { prepareAudioAsync } = await import('@/hooks/useAudioMixing');
-            const audioUrl = inputs.audio[0];
-            const audioResponse = await fetch(audioUrl);
-            const rawBlob = await audioResponse.blob();
-            // Ensure the blob has the correct MIME type for MediaBunny format detection
-            const audioMime = rawBlob.type || (audioUrl.startsWith('data:') ? audioUrl.split(';')[0].split(':')[1] : 'audio/mpeg');
-            const audioBlob = rawBlob.type ? rawBlob : new Blob([rawBlob], { type: audioMime });
-            audioData = await prepareAudioAsync(audioBlob, 0);
-          }
-
-          const { stitchVideosAsync } = await import('@/hooks/useStitchVideos');
-          const outputBlob = await stitchVideosAsync(
-            loopedBlobs,
-            audioData,
-            (progress) => {
-              updateNodeData(nodeId, { progress: progress.progress });
-            }
-          );
-
-          // Revoke old blob URL before replacing
-          const oldStitchData = get().nodes.find(n => n.id === nodeId)?.data as Record<string, unknown> | undefined;
-          revokeBlobUrl(oldStitchData?.outputVideo as string | undefined);
-
-          let outputVideo: string;
-          if (outputBlob.size > 20 * 1024 * 1024) {
-            outputVideo = URL.createObjectURL(outputBlob);
-          } else {
-            const reader = new FileReader();
-            outputVideo = await new Promise<string>((resolve) => {
-              reader.onload = () => resolve(reader.result as string);
-              reader.readAsDataURL(outputBlob);
-            });
-          }
-
-          updateNodeData(nodeId, {
-            outputVideo,
-            status: "complete",
-            progress: 100,
-            error: null,
-          });
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : "Stitch failed";
-          updateNodeData(nodeId, {
-            status: "error",
-            error: errorMessage,
-            progress: 0,
-          });
-        }
+        await executeVideoStitch(executionCtx);
+        set({ isRunning: false, currentNodeIds: [] });
+        await logger.endSession();
+        return;
       } else if (node.type === "easeCurve") {
-        const nodeData = node.data as EaseCurveNodeData;
-
-        if (nodeData.encoderSupported === false) {
-          updateNodeData(nodeId, {
-            status: "error",
-            error: "Browser does not support video encoding",
-            progress: 0,
-          });
-          set({ isRunning: false, currentNodeIds: [] });
-          await logger.endSession();
-          return;
-        }
-
-        updateNodeData(nodeId, { status: "loading", progress: 0, error: null });
-
-        try {
-          const inputs = getConnectedInputs(nodeId);
-
-          // Propagate parent easeCurve settings if inherited
-          let activeBezierHandles = nodeData.bezierHandles;
-          let activeEasingPreset = nodeData.easingPreset;
-          if (inputs.easeCurve) {
-            activeBezierHandles = inputs.easeCurve.bezierHandles;
-            activeEasingPreset = inputs.easeCurve.easingPreset;
-            const { edges } = get();
-            const easeCurveSourceId = edges.filter(
-              (e) => e.target === nodeId && e.targetHandle === "easeCurve"
-            )[0]?.source ?? null;
-            updateNodeData(nodeId, {
-              bezierHandles: activeBezierHandles,
-              easingPreset: activeEasingPreset,
-              inheritedFrom: easeCurveSourceId,
-            });
-          }
-
-          if (inputs.videos.length === 0) {
-            updateNodeData(nodeId, {
-              status: "error",
-              error: "Connect a video input to apply ease curve",
-              progress: 0,
-            });
-            set({ isRunning: false, currentNodeIds: [] });
-            await logger.endSession();
-            return;
-          }
-
-          const videoUrl = inputs.videos[0];
-          const videoBlob = await fetch(videoUrl).then((r) => r.blob());
-
-          const videoDuration = await new Promise<number>((resolve) => {
-            const video = document.createElement("video");
-            video.preload = "metadata";
-            video.onloadedmetadata = () => {
-              resolve(video.duration);
-              URL.revokeObjectURL(video.src);
-            };
-            video.onerror = () => {
-              resolve(5);
-              URL.revokeObjectURL(video.src);
-            };
-            video.src = URL.createObjectURL(videoBlob);
-          });
-
-          let easingFunction: string | ((t: number) => number);
-          if (activeEasingPreset) {
-            easingFunction = activeEasingPreset;
-          } else {
-            const { createBezierEasing } = await import('@/lib/easing-functions');
-            easingFunction = createBezierEasing(
-              activeBezierHandles[0],
-              activeBezierHandles[1],
-              activeBezierHandles[2],
-              activeBezierHandles[3]
-            );
-          }
-
-          const { applySpeedCurveAsync } = await import('@/hooks/useApplySpeedCurve');
-          const outputBlob = await applySpeedCurveAsync(
-            videoBlob,
-            videoDuration,
-            nodeData.outputDuration,
-            (progress) => {
-              updateNodeData(nodeId, { progress: progress.progress });
-            },
-            easingFunction
-          );
-
-          if (!outputBlob) {
-            throw new Error("Speed curve processing returned no output");
-          }
-
-          // Revoke old blob URL before replacing
-          const oldEaseData = get().nodes.find(n => n.id === nodeId)?.data as Record<string, unknown> | undefined;
-          revokeBlobUrl(oldEaseData?.outputVideo as string | undefined);
-
-          let outputVideo: string;
-          if (outputBlob.size > 20 * 1024 * 1024) {
-            outputVideo = URL.createObjectURL(outputBlob);
-          } else {
-            const reader = new FileReader();
-            outputVideo = await new Promise<string>((resolve) => {
-              reader.onload = () => resolve(reader.result as string);
-              reader.readAsDataURL(outputBlob);
-            });
-          }
-
-          updateNodeData(nodeId, {
-            outputVideo,
-            status: "complete",
-            progress: 100,
-            error: null,
-          });
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : "Ease curve processing failed";
-          updateNodeData(nodeId, {
-            status: "error",
-            error: errorMessage,
-            progress: 0,
-          });
-        }
-
+        await executeEaseCurve(executionCtx);
+        set({ isRunning: false, currentNodeIds: [] });
+        await logger.endSession();
+        return;
+      } else if (node.type === "videoTrim") {
+        await executeVideoTrim(executionCtx);
+        set({ isRunning: false, currentNodeIds: [] });
+        await logger.endSession();
+        return;
+      } else if (node.type === "videoFrameGrab") {
+        await executeVideoFrameGrab(executionCtx);
         set({ isRunning: false, currentNodeIds: [] });
         await logger.endSession();
         return;
       }
 
+      // After regeneration, execute directly connected downstream consumer nodes
+      // (e.g. glbViewer needs to fetch+load 3D model from upstream nanoBanana)
+      const { edges: currentEdges } = get();
+      const downstreamEdges = currentEdges.filter(e => e.source === nodeId);
+      for (const edge of downstreamEdges) {
+        const targetNode = get().nodes.find(n => n.id === edge.target);
+        if (!targetNode) continue;
+        const targetCtx = get()._buildExecutionContext(targetNode);
+        switch (targetNode.type) {
+          case "glbViewer":
+            await executeGlbViewer(targetCtx);
+            break;
+          case "output":
+            await executeOutput(targetCtx);
+            break;
+          case "outputGallery":
+            await executeOutputGallery(targetCtx);
+            break;
+          case "imageCompare":
+            await executeImageCompare(targetCtx);
+            break;
+        }
+      }
+
       logger.info('node.execution', 'Node regeneration completed successfully', { nodeId });
       set({ isRunning: false, currentNodeIds: [] });
 
-      // Save logs to server
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
-      }
-
+      saveLogSession();
       await logger.endSession();
     } catch (error) {
       logger.error('node.error', 'Node regeneration failed', {
@@ -3183,19 +1208,227 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       });
       set({ isRunning: false, currentNodeIds: [] });
 
-      // Save logs to server (even on error)
-      const session = logger.getCurrentSession();
-      if (session) {
-        session.endTime = new Date().toISOString();
-        fetch('/api/logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session }),
-        }).catch((err) => {
-          console.error('Failed to save log session:', err);
-        });
+      saveLogSession();
+      await logger.endSession();
+    }
+  },
+
+  executeSelectedNodes: async (nodeIds: string[]) => {
+    const { nodes, edges, isRunning, maxConcurrentCalls } = get();
+
+    if (isRunning) {
+      logger.warn('node.execution', 'Cannot execute nodes, workflow already running');
+      return;
+    }
+
+    if (nodeIds.length === 0) {
+      logger.warn('node.execution', 'No nodes provided for execution');
+      return;
+    }
+
+    // Filter to valid nodes
+    const selectedSet = new Set(nodeIds);
+    const nodesToExecute = nodeIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter((n): n is WorkflowNode => n !== undefined);
+
+    if (nodesToExecute.length === 0) {
+      logger.warn('node.execution', 'No valid nodes found for execution');
+      return;
+    }
+
+    // Create AbortController for this execution run
+    const abortController = new AbortController();
+    set({ isRunning: true, currentNodeIds: nodeIds, _abortController: abortController });
+
+    await logger.startSession();
+    logger.info('node.execution', 'Executing selected nodes', {
+      nodeCount: nodesToExecute.length,
+      nodeIds,
+    });
+
+    // Helper to execute a single node
+    const executeNode = async (node: WorkflowNode, signal: AbortSignal) => {
+      if (signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
       }
 
+      logger.info('node.execution', `Executing ${node.type} node`, {
+        nodeId: node.id,
+        nodeType: node.type,
+      });
+
+      const executionCtx = get()._buildExecutionContext(node, signal);
+      const regenOptions = { useStoredFallback: true };
+
+      switch (node.type) {
+        case "imageInput":
+        case "audioInput":
+          // Data source nodes - no execution needed
+          break;
+        case "glbViewer":
+          await executeGlbViewer(executionCtx);
+          break;
+        case "annotation":
+          await executeAnnotation(executionCtx);
+          break;
+        case "prompt":
+          await executePrompt(executionCtx);
+          break;
+        case "array":
+          await executeArray(executionCtx);
+          break;
+        case "promptConstructor":
+          await executePromptConstructor(executionCtx);
+          break;
+        case "nanoBanana":
+          await executeNanoBanana(executionCtx, regenOptions);
+          break;
+        case "generateVideo":
+          await executeGenerateVideo(executionCtx, regenOptions);
+          break;
+        case "generate3d":
+          await executeGenerate3D(executionCtx, regenOptions);
+          break;
+        case "llmGenerate":
+          await executeLlmGenerate(executionCtx, regenOptions);
+          break;
+        case "generateAudio":
+          await executeGenerateAudio(executionCtx, regenOptions);
+          break;
+        case "splitGrid":
+          await executeSplitGrid(executionCtx);
+          break;
+        case "output":
+          await executeOutput(executionCtx);
+          break;
+        case "outputGallery":
+          await executeOutputGallery(executionCtx);
+          break;
+        case "imageCompare":
+          await executeImageCompare(executionCtx);
+          break;
+        case "videoStitch":
+          await executeVideoStitch(executionCtx);
+          break;
+        case "easeCurve":
+          await executeEaseCurve(executionCtx);
+          break;
+        case "videoTrim":
+          await executeVideoTrim(executionCtx);
+          break;
+        case "videoFrameGrab":
+          await executeVideoFrameGrab(executionCtx);
+          break;
+      }
+    };
+
+    try {
+      // Filter edges to only those within the selected set for topological sort
+      const selectedEdges = edges.filter(
+        (e) => selectedSet.has(e.source) && selectedSet.has(e.target)
+      );
+
+      // Group selected nodes by dependency level for ordered execution
+      const levels = groupNodesByLevel(nodesToExecute, selectedEdges);
+
+      // Execute levels sequentially, nodes within each level in parallel batches
+      for (const level of levels) {
+        if (abortController.signal.aborted || !get().isRunning) break;
+
+        const levelNodes = level.nodeIds
+          .map((id) => nodesToExecute.find((n) => n.id === id))
+          .filter((n): n is WorkflowNode => n !== undefined);
+
+        if (levelNodes.length === 0) continue;
+
+        const batches = chunk(levelNodes, maxConcurrentCalls);
+
+        for (const batch of batches) {
+          if (abortController.signal.aborted || !get().isRunning) break;
+
+          const batchIds = batch.map((n) => n.id);
+          set({ currentNodeIds: batchIds });
+
+          logger.info('node.execution', `Executing batch of selected nodes`, {
+            level: level.level,
+            nodeCount: batch.length,
+            nodeIds: batchIds,
+          });
+
+          const results = await Promise.allSettled(
+            batch.map((node) => executeNode(node, abortController.signal))
+          );
+
+          // Check for failures, filtering out AbortErrors
+          const failed = results.find(
+            (r): r is PromiseRejectedResult =>
+              r.status === 'rejected' &&
+              !(r.reason instanceof DOMException && r.reason.name === 'AbortError')
+          );
+
+          if (failed) {
+            logger.error('node.error', 'Node execution failed in batch', {
+              level: level.level,
+              error: failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
+            });
+            abortController.abort();
+            throw failed.reason;
+          }
+        }
+      }
+
+      // Propagate to downstream consumer nodes not in the selected set
+      if (!abortController.signal.aborted && get().isRunning) {
+        const { edges: currentEdges } = get();
+        const propagated = new Set<string>();
+        for (const nodeId of nodeIds) {
+          const downstreamEdges = currentEdges.filter(e => e.source === nodeId);
+          for (const edge of downstreamEdges) {
+            if (selectedSet.has(edge.target) || propagated.has(edge.target)) continue;
+            const targetNode = get().nodes.find(n => n.id === edge.target);
+            if (!targetNode) continue;
+            const targetCtx = get()._buildExecutionContext(targetNode);
+            switch (targetNode.type) {
+              case "glbViewer":
+                await executeGlbViewer(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "output":
+                await executeOutput(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "outputGallery":
+                await executeOutputGallery(targetCtx);
+                propagated.add(edge.target);
+                break;
+              case "imageCompare":
+                await executeImageCompare(targetCtx);
+                propagated.add(edge.target);
+                break;
+            }
+          }
+        }
+      }
+
+      logger.info('node.execution', 'Selected nodes execution completed successfully');
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+
+      saveLogSession();
+      await logger.endSession();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        logger.info('node.execution', 'Selected nodes execution cancelled by user');
+      } else {
+        logger.error('node.error', 'Selected nodes execution failed', {}, error instanceof Error ? error : undefined);
+        useToast.getState().show(
+          `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          "error"
+        );
+      }
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+
+      saveLogSession();
       await logger.endSession();
     }
   },
@@ -3269,12 +1502,41 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return node;
     }) as WorkflowNode[];
 
+    // Migrate legacy indexed handle IDs on edges targeting nanoBanana nodes.
+    // GenerateImageNode always renders "image"/"text" handles (not "image-0"/"text-0"),
+    // so edges saved with the old indexed format cause React Flow error #008.
+    const nanoBananaNodeIds = new Set(
+      workflow.nodes.filter((n) => n.type === "nanoBanana").map((n) => n.id)
+    );
+    workflow.edges = workflow.edges.map((edge) => {
+      if (!nanoBananaNodeIds.has(edge.target)) return edge;
+      const th = edge.targetHandle;
+      if (th === "image-0" || th === "text-0") {
+        const baseHandle = th === "image-0" ? "image" : "text";
+        return {
+          ...edge,
+          targetHandle: baseHandle,
+          id: `edge-${edge.source}-${edge.target}-${edge.sourceHandle || "default"}-${baseHandle}`,
+        };
+      }
+      return edge;
+    });
+
+    // Deduplicate edges by ID (keep the last occurrence, which is the most recent)
+    const edgeById = new Map<string, WorkflowEdge>();
+    for (const edge of workflow.edges) {
+      edgeById.set(edge.id, edge);
+    }
+    if (edgeById.size < workflow.edges.length) {
+      workflow.edges = Array.from(edgeById.values());
+    }
+
     // Look up saved config from localStorage (only if workflow has an ID)
     const configs = loadSaveConfigs();
     const savedConfig = workflow.id ? configs[workflow.id] : null;
 
-    // Determine the workflow directory path (passed in or from saved config)
-    const directoryPath = workflowPath || savedConfig?.directoryPath;
+    // Determine the workflow directory path (passed in, from saved config, or embedded in workflow)
+    const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath;
 
     // Hydrate images if we have a directory path and the workflow has image refs
     let hydratedWorkflow = workflow;
@@ -3469,6 +1731,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         version: 1,
         id: workflowId,
         name: workflowName,
+        directoryPath: saveDirectoryPath,
         nodes: currentNodes,
         edges,
         edgeStyle,
@@ -3571,6 +1834,33 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }
   },
 
+  saveAsFile: async (name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return false;
+    }
+
+    const { saveDirectoryPath, workflowId: prevId, workflowName: prevName } = get();
+    if (!saveDirectoryPath) {
+      return false;
+    }
+
+    // Save As creates another workflow JSON in the same project folder.
+    const newWorkflowId = generateWorkflowId();
+    set({
+      workflowId: newWorkflowId,
+      workflowName: trimmedName,
+      hasUnsavedChanges: true,
+    });
+
+    const success = await get().saveToFile();
+    if (!success) {
+      // Rollback to previous identity on failure
+      set({ workflowId: prevId, workflowName: prevName });
+    }
+    return success;
+  },
+
   initializeAutoSave: () => {
     if (autoSaveIntervalId) return;
 
@@ -3656,6 +1946,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     };
     set({ providerSettings: updated });
     saveProviderSettings(updated);
+  },
+
+  // Keyboard shortcuts dialog actions
+  setShortcutsDialogOpen: (open: boolean) => {
+    set({ shortcutsDialogOpen: open });
   },
 
   // Model search dialog actions
@@ -3809,6 +2104,12 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     });
 
     return { applied: result.applied, skipped: result.skipped };
+  },
+
+  // Canvas navigation settings actions
+  updateCanvasNavigationSettings: (settings: CanvasNavigationSettings) => {
+    set({ canvasNavigationSettings: settings });
+    saveCanvasNavigationSettings(settings);
   },
 }));
 

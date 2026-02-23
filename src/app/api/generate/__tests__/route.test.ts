@@ -1431,6 +1431,73 @@ describe("/api/generate route", () => {
       expect(requestBody.input.prompt).toBe("Test prompt");
     });
 
+    it("should unwrap Replicate dynamicInputs array to single value when schema type is NOT 'array'", async () => {
+      // Model info fetch - with schema showing image_url has type: "string" (NOT array)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          latest_version: {
+            id: "version123",
+            openapi_schema: {
+              components: {
+                schemas: {
+                  Input: {
+                    properties: {
+                      image_url: { type: "string" },  // Single string, not array
+                      prompt: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      });
+
+      // Create prediction
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          id: "prediction123",
+          status: "succeeded",
+          output: ["https://replicate.delivery/output.png"],
+        }),
+      });
+
+      // Fetch output media
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "",
+          selectedModel: {
+            provider: "replicate",
+            modelId: "some-model/with-string-input",
+            displayName: "String Input Model",
+          },
+          dynamicInputs: {
+            prompt: "Test prompt",
+            image_url: ["data:image/png;base64,image1", "data:image/png;base64,image2"],  // Array sent for string param
+          },
+        },
+        { "X-Replicate-API-Key": "test-replicate-key" }
+      );
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      // Verify image_url was unwrapped to first element because schema says type: "string"
+      const createPredictionCall = mockFetch.mock.calls[1];
+      const requestBody = JSON.parse(createPredictionCall[1].body);
+      expect(requestBody.input.image_url).toBe("data:image/png;base64,image1");
+      expect(Array.isArray(requestBody.input.image_url)).toBe(false);
+      expect(requestBody.input.prompt).toBe("Test prompt");
+    });
+
     it("should use env var API key when header not provided", async () => {
       process.env.REPLICATE_API_KEY = "env-replicate-key";
 
@@ -2370,6 +2437,88 @@ describe("/api/generate route", () => {
       expect(requestBody.prompt).toBe("Test prompt");
     });
 
+    it("should unwrap array dynamicInputs to single value when schema type is NOT 'array'", async () => {
+      // Schema fetch - return schema showing image_url has type: "string" (NOT array)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          models: [{
+            openapi: {
+              paths: {
+                "/": {
+                  post: {
+                    requestBody: {
+                      content: {
+                        "application/json": {
+                          schema: {
+                            properties: {
+                              image_url: { type: "string" },  // Single string, not array
+                              prompt: { type: "string" },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          }],
+        }),
+      });
+
+      // CDN uploads for both images in the array
+      // Promise.all fires both initiates concurrently before either PUT,
+      // so mock order is: initiate1, initiate2, PUT1, PUT2
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ upload_url: "https://fal.ai/cdn/put-target-1", file_url: "https://fal.ai/cdn/first.png" }),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ upload_url: "https://fal.ai/cdn/put-target-2", file_url: "https://fal.ai/cdn/second.png" }),
+      });
+      mockFetch.mockResolvedValueOnce({ ok: true }); // PUT 1
+      mockFetch.mockResolvedValueOnce({ ok: true }); // PUT 2
+
+      // Queue flow: submit → poll → result → media
+      mockFalQueueSuccess(
+        { images: [{ url: "https://fal.media/output.png" }] },
+        "image/png",
+        1024
+      );
+
+      const request = createMockPostRequest(
+        {
+          prompt: "Test prompt",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/flux/schnell",
+            displayName: "Flux Schnell",
+          },
+          dynamicInputs: {
+            prompt: "Test prompt",
+            image_url: ["data:image/png;base64,image1", "data:image/png;base64,image2"],  // Array of images
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+
+      // Find the queue submit call
+      const queueSubmitCall = mockFetch.mock.calls.find(
+        (call: [string, ...unknown[]]) => typeof call[0] === "string" && call[0].includes("queue.fal.run") && !call[0].includes("/requests/")
+      );
+      expect(queueSubmitCall).toBeDefined();
+      const requestBody = JSON.parse((queueSubmitCall![1] as { body: string }).body);
+      // image_url should be unwrapped to a single CDN URL string (first element), not an array
+      expect(requestBody.image_url).toBe("https://fal.ai/cdn/first.png");
+      expect(Array.isArray(requestBody.image_url)).toBe(false);
+      expect(requestBody.prompt).toBe("Test prompt");
+    });
+
     it("should handle error response with error.message format", async () => {
       // Schema fetch (for input mapping when no dynamicInputs)
       mockFetch.mockResolvedValueOnce({
@@ -2487,6 +2636,154 @@ describe("/api/generate route", () => {
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
       expect(data.error).toContain("No media URL in response");
+    });
+
+    it("should handle model_glb.url response format (Hunyuan 3D)", async () => {
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue flow: submit → poll → result (model_glb format) → media fetch
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ model_glb: { url: "https://fal.media/hunyuan3d-output.glb" } }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "A 3D model of a chair",
+          mediaType: "3d",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/hunyuan3d/mini",
+            displayName: "Hunyuan 3D Mini",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.contentType).toBe("3d");
+      expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-output.glb");
+    });
+
+    it("should handle model_urls.glb.url response format (Hunyuan 3D variant)", async () => {
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue flow: submit → poll → result (model_urls.glb format) → media fetch
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ model_urls: { glb: { url: "https://fal.media/hunyuan3d-v2-output.glb" } } }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "A 3D model of a tree",
+          mediaType: "3d",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/hunyuan3d/standard",
+            displayName: "Hunyuan 3D Standard",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.contentType).toBe("3d");
+      expect(data.model3dUrl).toBe("https://fal.media/hunyuan3d-v2-output.glb");
+    });
+
+    it("should include Result keys in error log when no media URL found", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Schema fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ models: [] }),
+      });
+
+      // Queue submit
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ request_id: "test-req-id" }),
+      });
+      // Status poll → COMPLETED
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "COMPLETED" }),
+      });
+      // Result fetch returns unrecognized format
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ unknown_field: "data", another: 123 }),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "Test prompt",
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/some-model",
+            displayName: "Some Model",
+          },
+        },
+        { "X-Fal-API-Key": "test-fal-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("No media URL in response");
+
+      // Verify the enhanced error log includes Result keys
+      const errorCalls = consoleSpy.mock.calls;
+      const resultKeysLog = errorCalls.find(
+        (call) => typeof call[0] === "string" && call[0].includes("Result keys:")
+      );
+      expect(resultKeysLog).toBeDefined();
+      expect(resultKeysLog![0]).toContain("unknown_field");
+      expect(resultKeysLog![0]).toContain("another");
+
+      consoleSpy.mockRestore();
     });
   });
 });

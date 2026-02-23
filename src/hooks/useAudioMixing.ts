@@ -228,9 +228,8 @@ export async function prepareAudioAsync(
       duration: totalSamples / sampleRate,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Audio mixing error:', error);
-    throw new Error(`Failed to process audio: ${errorMessage}`);
+    console.error('[VideoStitch] Audio preparation failed:', error instanceof Error ? error.message : error, error);
+    throw new Error(`Failed to process audio: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

@@ -37,10 +37,12 @@ describe("nodeDefaults utilities", () => {
         "imageInput",
         "annotation",
         "prompt",
+        "array",
         "nanoBanana",
         "generateVideo",
         "llmGenerate",
         "splitGrid",
+        "glbViewer",
         "output",
       ];
 
@@ -117,6 +119,22 @@ describe("nodeDefaults utilities", () => {
       expect(data).toHaveProperty("prompt", "");
     });
 
+    it("creates correct structure for array", () => {
+      const data = createDefaultNodeData("array");
+
+      expect(data).toHaveProperty("inputText", null);
+      expect(data).toHaveProperty("splitMode", "delimiter");
+      expect(data).toHaveProperty("delimiter", "*");
+      expect(data).toHaveProperty("regexPattern", "");
+      expect(data).toHaveProperty("trimItems", true);
+      expect(data).toHaveProperty("removeEmpty", true);
+      expect(data).toHaveProperty("selectedOutputIndex", null);
+      expect(data).toHaveProperty("outputItems");
+      expect(Array.isArray((data as any).outputItems)).toBe(true);
+      expect(data).toHaveProperty("outputText", "[]");
+      expect(data).toHaveProperty("error", null);
+    });
+
     it("creates correct structure for nanoBanana", () => {
       const data = createDefaultNodeData("nanoBanana");
 
@@ -174,6 +192,14 @@ describe("nodeDefaults utilities", () => {
       expect(data).toHaveProperty("isConfigured", false);
       expect(data).toHaveProperty("status", "idle");
       expect(data).toHaveProperty("error", null);
+    });
+
+    it("creates correct structure for glbViewer", () => {
+      const data = createDefaultNodeData("glbViewer");
+
+      expect(data).toHaveProperty("glbUrl", null);
+      expect(data).toHaveProperty("filename", null);
+      expect(data).toHaveProperty("capturedImage", null);
     });
 
     it("creates correct structure for output", () => {

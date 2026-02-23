@@ -244,6 +244,7 @@ function generateNodeTitle(type: string): string {
     imageInput: "Image Input",
     annotation: "Annotation",
     prompt: "Prompt",
+    array: "Array",
     nanoBanana: "Generate Image",
     generateVideo: "Generate Video",
     llmGenerate: "LLM Generate",

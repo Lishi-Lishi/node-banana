@@ -79,6 +79,16 @@ describe("ConnectionDropMenu", () => {
       expect(screen.queryByText("Annotate")).not.toBeInTheDocument();
       expect(screen.queryByText("LLM Generate")).not.toBeInTheDocument();
     });
+
+    it("should show 3D-accepting nodes when dragging from 3D output", () => {
+      render(<ConnectionDropMenu {...defaultProps} handleType="3d" connectionType="source" />);
+
+      expect(screen.getByText("3D Viewer")).toBeInTheDocument();
+      // Should NOT show image/text/video nodes
+      expect(screen.queryByText("Annotate")).not.toBeInTheDocument();
+      expect(screen.queryByText("Generate Image")).not.toBeInTheDocument();
+      expect(screen.queryByText("Generate Video")).not.toBeInTheDocument();
+    });
   });
 
   describe("Node Type Filtering - Target Connection (from input handle)", () => {
@@ -109,6 +119,15 @@ describe("ConnectionDropMenu", () => {
       // Should NOT show other nodes
       expect(screen.queryByText("Image Input")).not.toBeInTheDocument();
       expect(screen.queryByText("Prompt")).not.toBeInTheDocument();
+    });
+
+    it("should show 3D-producing nodes when dragging from 3D input", () => {
+      render(<ConnectionDropMenu {...defaultProps} handleType="3d" connectionType="target" />);
+
+      expect(screen.getByText("Generate 3D")).toBeInTheDocument();
+      // Should NOT show other nodes
+      expect(screen.queryByText("Image Input")).not.toBeInTheDocument();
+      expect(screen.queryByText("Generate Image")).not.toBeInTheDocument();
     });
   });
 
@@ -226,8 +245,10 @@ describe("ConnectionDropMenu", () => {
     it("should wrap around when navigating past last item", () => {
       render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
 
-      // Text target options: Prompt, Prompt Constructor, nanoBanana, generateVideo, llmGenerate (5 items)
-      // Navigate down 5 times to wrap to first
+      // Text target labels: Prompt, Prompt Constructor, Array, Generate Image, Generate Video, Generate Audio, LLM Generate (7 items)
+      // Navigate down 7 times to wrap to first
+      fireEvent.keyDown(document, { key: "ArrowDown" });
+      fireEvent.keyDown(document, { key: "ArrowDown" });
       fireEvent.keyDown(document, { key: "ArrowDown" });
       fireEvent.keyDown(document, { key: "ArrowDown" });
       fireEvent.keyDown(document, { key: "ArrowDown" });

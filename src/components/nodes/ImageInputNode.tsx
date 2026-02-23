@@ -37,6 +37,7 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
         img.onload = () => {
           updateNodeData(id, {
             image: base64,
+            imageRef: undefined,
             filename: file.name,
             dimensions: { width: img.width, height: img.height },
           });
@@ -74,6 +75,7 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
   const handleRemove = useCallback(() => {
     updateNodeData(id, {
       image: null,
+      imageRef: undefined,
       filename: null,
       dimensions: null,
     });

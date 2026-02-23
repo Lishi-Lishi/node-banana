@@ -104,6 +104,14 @@ const sampleModels: ProviderModel[] = [
     capabilities: ["text-to-video", "image-to-video"],
     coverImage: "https://example.com/kling.jpg",
   },
+  {
+    id: "fal-ai/triposr",
+    name: "TripoSR",
+    description: "3D model generation from images",
+    provider: "fal",
+    capabilities: ["image-to-3d"],
+    coverImage: "https://example.com/triposr.jpg",
+  },
 ];
 
 describe("ModelSearchDialog", () => {
@@ -412,7 +420,7 @@ describe("ModelSearchDialog", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/3 models? found/)).toBeInTheDocument();
+        expect(screen.getByText(/4 models? found/)).toBeInTheDocument();
       });
     });
   });
@@ -475,6 +483,7 @@ describe("ModelSearchDialog", () => {
             provider: "replicate",
             modelId: "stability-ai/sdxl",
             displayName: "SDXL",
+            capabilities: ["text-to-image"],
           },
         })
       );
@@ -506,6 +515,38 @@ describe("ModelSearchDialog", () => {
             provider: "fal",
             modelId: "kling-video/v1.6/pro",
             displayName: "Kling Video Pro",
+            capabilities: ["text-to-video", "image-to-video"],
+          },
+        })
+      );
+    });
+
+    it("should create generate3d node for 3D models", async () => {
+      const onClose = vi.fn();
+
+      render(
+        <TestWrapper>
+          <ModelSearchDialog isOpen={true} onClose={onClose} />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("TripoSR")).toBeInTheDocument();
+      });
+
+      // Click on the TripoSR 3D model card
+      const modelCard = screen.getByText("TripoSR").closest("button");
+      fireEvent.click(modelCard!);
+
+      expect(mockAddNode).toHaveBeenCalledWith(
+        "generate3d",
+        expect.any(Object),
+        expect.objectContaining({
+          selectedModel: {
+            provider: "fal",
+            modelId: "fal-ai/triposr",
+            displayName: "TripoSR",
+            capabilities: ["image-to-3d"],
           },
         })
       );

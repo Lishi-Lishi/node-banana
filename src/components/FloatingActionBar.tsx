@@ -137,6 +137,17 @@ function GenerateComboButton() {
             Video
           </button>
           <button
+            onClick={() => handleAddNode("generate3d")}
+            draggable
+            onDragStart={(e) => handleDragStart(e, "generate3d")}
+            className="w-full px-3 py-2 text-left text-[11px] font-medium text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100 transition-colors flex items-center gap-2 cursor-grab active:cursor-grabbing"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+            </svg>
+            3D
+          </button>
+          <button
             onClick={() => handleAddNode("llmGenerate")}
             draggable
             onDragStart={(e) => handleDragStart(e, "llmGenerate")}
@@ -161,6 +172,7 @@ export function FloatingActionBar() {
     currentNodeIds,
     executeWorkflow,
     regenerateNode,
+    executeSelectedNodes,
     stopWorkflow,
     validateWorkflow,
     edgeStyle,
@@ -185,11 +197,15 @@ export function FloatingActionBar() {
   const runMenuRef = useRef<HTMLDivElement>(null);
   const { valid, errors } = validateWorkflow();
 
+  // Get the selected nodes
+  const selectedNodes = useMemo(() => {
+    return nodes.filter((n) => n.selected);
+  }, [nodes]);
+
   // Get the selected node (if exactly one is selected)
   const selectedNode = useMemo(() => {
-    const selected = nodes.filter((n) => n.selected);
-    return selected.length === 1 ? selected[0] : null;
-  }, [nodes]);
+    return selectedNodes.length === 1 ? selectedNodes[0] : null;
+  }, [selectedNodes]);
 
   // Close run menu when clicking outside
   useEffect(() => {
@@ -230,6 +246,13 @@ export function FloatingActionBar() {
   const handleRunSelectedOnly = () => {
     if (selectedNode) {
       regenerateNode(selectedNode.id);
+      setRunMenuOpen(false);
+    }
+  };
+
+  const handleRunSelectedNodes = () => {
+    if (selectedNodes.length > 0) {
+      executeSelectedNodes(selectedNodes.map((n) => n.id));
       setRunMenuOpen(false);
     }
   };
@@ -390,6 +413,24 @@ export function FloatingActionBar() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
                 </svg>
                 Run selected node only
+              </button>
+              <button
+                onClick={handleRunSelectedNodes}
+                disabled={selectedNodes.length === 0}
+                className={`w-full px-3 py-2 text-left text-[11px] font-medium transition-colors flex items-center gap-2 ${
+                  selectedNodes.length > 0
+                    ? "text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100"
+                    : "text-neutral-500 cursor-not-allowed"
+                }`}
+                title={selectedNodes.length === 0 ? "Select one or more nodes first" : `Run ${selectedNodes.length} selected node${selectedNodes.length > 1 ? 's' : ''}`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V9.653z" />
+                </svg>
+                {selectedNodes.length > 0
+                  ? `Run ${selectedNodes.length} selected node${selectedNodes.length !== 1 ? 's' : ''}`
+                  : 'Run selected nodes'}
               </button>
             </div>
           )}

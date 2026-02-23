@@ -27,6 +27,20 @@ global.fetch = mockFetch;
 const mockConfirm = vi.fn(() => true);
 global.confirm = mockConfirm;
 
+// Ensure localStorage is always available in this test environment
+const localStorageMock = {
+  getItem: vi.fn(() => null),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn(),
+  key: vi.fn(() => null),
+  length: 0,
+};
+Object.defineProperty(globalThis, "localStorage", {
+  value: localStorageMock,
+  configurable: true,
+});
+
 // Default provider settings
 const defaultProviderSettings: ProviderSettings = {
   providers: {
@@ -339,7 +353,7 @@ describe("ProjectSetupModal", () => {
       expect(onSave).not.toHaveBeenCalled();
     });
 
-    it("should show error when directory does not exist", async () => {
+    it("should allow save when directory does not exist yet", async () => {
       mockFetch.mockImplementation((url: string) => {
         if (url === "/api/env-status") {
           return Promise.resolve({
@@ -379,9 +393,12 @@ describe("ProjectSetupModal", () => {
       fireEvent.click(screen.getByText("Create"));
 
       await waitFor(() => {
-        expect(screen.getByText("Project directory does not exist")).toBeInTheDocument();
+        expect(onSave).toHaveBeenCalledWith(
+          "mock-workflow-id",
+          "My Project",
+          "/nonexistent/path/My Project"
+        );
       });
-      expect(onSave).not.toHaveBeenCalled();
     });
 
     it("should show error when path is not absolute", async () => {
@@ -509,7 +526,7 @@ describe("ProjectSetupModal", () => {
         expect(onSave).toHaveBeenCalledWith(
           "mock-workflow-id",
           "My New Project",
-          "/path/to/project"
+          "/path/to/project/My New Project"
         );
       });
     });
@@ -641,7 +658,41 @@ describe("ProjectSetupModal", () => {
       });
     });
 
-    it("should update directory input when path is selected", async () => {
+    it("should keep selected parent path in input after browse", async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url === "/api/env-status") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ gemini: false, openai: false, replicate: false, fal: false }),
+          });
+        }
+        if (url === "/api/browse-directory") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, path: "/selected/path" }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+      });
+
+      render(
+        <ProjectSetupModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+          mode="new"
+        />
+      );
+
+      fireEvent.click(screen.getByText("Browse"));
+
+      await waitFor(() => {
+        const directoryInput = screen.getByPlaceholderText("/Users/username/projects/my-project") as HTMLInputElement;
+        expect(directoryInput.value).toBe("/selected/path");
+      });
+    });
+
+    it("should keep selected path when project name is empty", async () => {
       mockFetch.mockImplementation((url: string) => {
         if (url === "/api/env-status") {
           return Promise.resolve({
@@ -746,6 +797,66 @@ describe("ProjectSetupModal", () => {
       await waitFor(() => {
         // Should keep original value when cancelled
         expect(directoryInput.value).toBe("/original/path");
+      });
+    });
+
+    it("should save using latest project name when renamed after browse", async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url === "/api/env-status") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ gemini: false, openai: false, replicate: false, fal: false }),
+          });
+        }
+        if (url === "/api/browse-directory") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, path: "/selected/path" }),
+          });
+        }
+        if (url.startsWith("/api/workflow")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ exists: false, isDirectory: false }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+      });
+
+      const onSave = vi.fn();
+
+      render(
+        <ProjectSetupModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          mode="new"
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText("my-project"), {
+        target: { value: "Foo" },
+      });
+
+      fireEvent.click(screen.getByText("Browse"));
+
+      await waitFor(() => {
+        const directoryInput = screen.getByPlaceholderText("/Users/username/projects/my-project") as HTMLInputElement;
+        expect(directoryInput.value).toBe("/selected/path");
+      });
+
+      fireEvent.change(screen.getByPlaceholderText("my-project"), {
+        target: { value: "Bar" },
+      });
+
+      fireEvent.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          "mock-workflow-id",
+          "Bar",
+          "/selected/path/Bar"
+        );
       });
     });
   });
