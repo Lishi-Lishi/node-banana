@@ -21,7 +21,7 @@ export const maxDuration = 300; // 5 minute timeout (Vercel hobby plan limit)
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
 
 // Map model types to Gemini model IDs
-const MODEL_MAP: Record<ModelType, string> = {
+const MODEL_MAP: Record<string, string> = {
   "nano-banana": "gemini-2.5-flash-image", // Updated to correct model name
   "nano-banana-pro": "gemini-3-pro-image-preview",
 };
@@ -37,8 +37,28 @@ interface MultiProviderGenerateRequest extends GenerateRequest {
 }
 
 /**
- * Generate image using Gemini API (legacy/default path)
+ * 辅助函数：将图片 (URL 或 Base64) 转为纯 Base64 字符串
  */
+async function imageUrlToBase64(url: string): Promise<string> {
+  // 1. 如果已经是 Data URL (data:image/...)，直接截取逗号后的部分
+  if (url.startsWith("data:")) {
+    return url.split("base64,")[1];
+  }
+  // 2. 如果是网络 URL，则下载并转换
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
+    const buffer = await res.arrayBuffer();
+    return Buffer.from(buffer).toString("base64");
+  } catch (error) {
+    console.error("Image conversion failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Generate image using Gemini API (legacy/default path)
+ *
 async function generateWithGemini(
   requestId: string,
   apiKey: string,
@@ -206,6 +226,147 @@ async function generateWithGemini(
     { status: 500 }
   );
 }
+*/
+   
+
+/**
+ * 核心修改部分：Handle Yunwu/Gemini Native
+ * 使用原生 Fetch 替代 Google SDK，解决代理/云雾 API 兼容性问题
+ */
+async function handleYunwuGeminiNative(
+  requestId: string,
+  apiKey: string,
+  prompt: string,
+  images: string[],
+  model: string,
+  aspectRatio?: string,
+  resolution?: string
+): Promise<NextResponse> {
+  
+  // 1. 基础配置：获取 Base URL 和 目标模型 ID
+  // 默认云雾地址，如果环境变量没配则使用默认值
+  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, ""); // 移除末尾斜杠，防止拼接错误
+
+  const targetId = MODEL_MAP[model] || "gemini-2.5-flash-image";
+
+  // 2. 构造精确的 API URL
+  const url = `${baseUrl}/v1beta/models/${targetId}:generateContent?key=${apiKey}`;
+
+  console.log(`[API:${requestId}] 🚀 POST Yunwu-Gemini Native: ${url}`);
+  console.log(`[API:${requestId}] Config: Model=${targetId}, Ratio=${aspectRatio || "Default"}, Res=${resolution || "Default"}`);
+
+ try {
+    // 3. 准备请求内容 (Parts)
+    const parts: any[] = [];
+
+    // 🔥 修改点 A：先处理图片，并加上 "Image X:" 标签
+    if (images && images.length > 0) {
+      console.log(`[API:${requestId}] 🔄 Converting ${images.length} images...`);
+      
+      for (let i = 0; i < images.length; i++) {
+        const imgUrl = images[i];
+        try {
+          const base64Data = await imageUrlToBase64(imgUrl);
+          
+          // ✨ 核心技巧：在每张图前面加一个纯文本标签
+          parts.push({ text: `Image ${i + 1}:` });
+
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: base64Data
+            }
+          });
+        } catch (e) {
+          console.error(`[API:${requestId}] Failed to process image ${i + 1}`, e);
+        }
+      }
+    }
+
+    // 🔥 修改点 B：最后放入 Prompt
+    // 这样模型读到的顺序是：[Image 1标签] -> [图片1] -> [Image 2标签] -> [图片2] -> [你的指令]
+    if (prompt) {
+      // 可以在 prompt 前面加个引导词，效果更好
+      parts.push({ text: "\nUser Prompt: " + prompt });
+    }
+
+    // 4. 构造请求体 (JSON Body)
+    const body: any = {
+      contents: [
+        {
+          parts: parts // 🔥 包含 文本 + 图片
+        }
+      ],
+      generationConfig: {
+        responseModalities: ["IMAGE"], // 强制生图模式
+        imageConfig: {}
+      }
+    };
+
+    // 5. 注入参数 (Aspect Ratio & Resolution)
+    if (aspectRatio) {
+      body.generationConfig.imageConfig.aspectRatio = aspectRatio;
+    }
+    // 只有 Pro 模型才支持分辨率设置，防止 Flash 模型报错
+    if (resolution && (targetId.includes("pro") || model.includes("pro"))) {
+      body.generationConfig.imageConfig.imageSize = resolution;
+    }
+
+    // 6. 发送 Fetch 请求
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+        // 注意：Google API Key 在 URL 参数里，通常 header 不需要 Authorization
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[API:${requestId}] ❌ Gemini Native Error:`, errText);
+      throw new Error(`Cloud API Failed (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+
+    // 7. 解析结果
+    const candidate = data.candidates?.[0];
+    const part = candidate?.content?.parts?.[0];
+
+    // A. 成功：提取图片
+    if (part?.inlineData?.data) {
+      const base64Data = part.inlineData.data;
+      const mimeType = part.inlineData.mimeType || "image/png";
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+
+      console.log(`[API:${requestId}] ✅ Success! Image generated.`);
+
+      return NextResponse.json({
+        success: true,
+        image: dataUrl,
+        contentType: "image"
+      });
+    }
+
+    // B. 失败：模型返回了文本 (通常是拒识或错误提示)
+    if (part?.text) {
+      console.warn(`[API:${requestId}] ⚠️ Gemini returned text:`, part.text);
+      throw new Error(`Model returned text instead of image: "${part.text}"`);
+    }
+
+    throw new Error("Unknown Gemini native response format");
+
+  } catch (error: any) {
+    console.error(`[API:${requestId}] 💥 Handler Error:`, error);
+    return NextResponse.json(
+      { success: false, error: error.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
+}
+
 
 /**
  * Input parameter patterns - maps generic input types to possible schema parameter names
@@ -2404,6 +2565,7 @@ export async function POST(request: NextRequest) {
     const provider: ProviderType = selectedModel?.provider || "gemini";
     console.log(`[API:${requestId}] Provider: ${provider}, Model: ${selectedModel?.modelId || model}`);
 
+    
     // Route to appropriate provider
     if (provider === "replicate") {
       // User-provided key takes precedence over env variable
@@ -2780,9 +2942,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Use selectedModel.modelId if available (new format), fallback to legacy model field
-    const geminiModel = (selectedModel?.modelId as ModelType) || model;
+    // 强制转换为 string 类型，兼容我们的 MODEL_MAP
+    const geminiModel = (selectedModel?.modelId || model) as string;
 
-    return await generateWithGemini(
+    return await handleYunwuGeminiNative(
       requestId,
       geminiApiKey,
       prompt,
@@ -2790,7 +2953,7 @@ export async function POST(request: NextRequest) {
       geminiModel,
       aspectRatio,
       resolution,
-      useGoogleSearch
+      //useGoogleSearch
     );
   } catch (error) {
     // Extract error information
