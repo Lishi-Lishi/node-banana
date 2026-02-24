@@ -55,7 +55,6 @@ export async function executeVideoStitch(ctx: NodeExecutionContext): Promise<voi
     // Prepare audio if connected
     let audioData = null;
     if (inputs.audio.length > 0 && inputs.audio[0]) {
-      console.log('[VideoStitch] Audio input detected, preparing audio...');
       const { prepareAudioAsync } = await import("@/hooks/useAudioMixing");
       const audioUrl = inputs.audio[0];
       const audioResponse = await fetch(audioUrl);
@@ -69,14 +68,6 @@ export async function executeVideoStitch(ctx: NodeExecutionContext): Promise<voi
         ? rawBlob
         : new Blob([rawBlob], { type: audioMime });
       audioData = await prepareAudioAsync(audioBlob, 0);
-      if (!audioData) {
-        console.warn('[VideoStitch] prepareAudioAsync returned null — audio will be skipped');
-      } else {
-        console.log('[VideoStitch] Audio prepared: %ds, %d channels, %dHz',
-          audioData.duration.toFixed(1), audioData.buffer.numberOfChannels, audioData.buffer.sampleRate);
-      }
-    } else {
-      console.log('[VideoStitch] No audio connected (inputs.audio.length=%d)', inputs.audio.length);
     }
 
     const { stitchVideosAsync } = await import("@/hooks/useStitchVideos");

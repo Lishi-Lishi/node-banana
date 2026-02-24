@@ -288,6 +288,13 @@ export async function generateWithFalQueue(
       }
     }
     Object.assign(requestBody, filteredInputs);
+
+    // Ensure prompt is included even when dynamicInputs are present
+    // (executor sends prompt as top-level field, not in dynamicInputs)
+    const promptParam = paramMap.prompt || "prompt";
+    if (input.prompt && !requestBody[promptParam]) {
+      requestBody[promptParam] = input.prompt;
+    }
   } else {
     // Fallback: use schema to map generic input names to model-specific parameter names
     if (input.prompt) {

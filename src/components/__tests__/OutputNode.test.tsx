@@ -39,6 +39,9 @@ describe("OutputNode", () => {
     mockUseWorkflowStore.mockImplementation((selector) => {
       const state = {
         updateNodeData: mockUpdateNodeData,
+        regenerateNode: vi.fn(),
+        edges: [],
+        isRunning: false,
         currentNodeIds: [],
         groups: {},
         nodes: [],

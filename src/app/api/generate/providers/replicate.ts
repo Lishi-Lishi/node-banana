@@ -76,7 +76,7 @@ export async function generateWithReplicate(
   if (hasDynamicInputs) {
     // Apply coerced parameters first, then dynamic inputs override
     Object.assign(predictionInput, coerceParameterTypes(input.parameters, parameterTypes));
-    const { schemaArrayParams } = getInputMappingFromSchema(schema);
+    const { paramMap, schemaArrayParams } = getInputMappingFromSchema(schema);
 
     // Apply array wrapping based on schema type
     for (const [key, value] of Object.entries(input.dynamicInputs!)) {
@@ -89,6 +89,13 @@ export async function generateWithReplicate(
           predictionInput[key] = value;
         }
       }
+    }
+
+    // Ensure prompt is included even when dynamicInputs are present
+    // (executor sends prompt as top-level field, not in dynamicInputs)
+    const promptParam = paramMap.prompt || "prompt";
+    if (input.prompt && !predictionInput[promptParam]) {
+      predictionInput[promptParam] = input.prompt;
     }
   } else {
     // Fallback: use schema to map generic input names to model-specific parameter names

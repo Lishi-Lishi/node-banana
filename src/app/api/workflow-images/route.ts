@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
+import { validateWorkflowPath } from "@/utils/pathValidation";
 
 export const maxDuration = 300; // 5 minute timeout for large image operations
 
@@ -62,6 +63,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate path to prevent traversal attacks
+    const pathValidation = validateWorkflowPath(workflowPath);
+    if (!pathValidation.valid) {
+      logger.warn('file.error', 'Workflow image save failed: invalid path', {
+        workflowPath,
+        error: pathValidation.error,
+      });
+      return NextResponse.json(
+        { success: false, error: pathValidation.error },
+        { status: 400 }
+      );
+    }
+
     // Validate workflow directory exists, or create it if missing
     try {
       const stats = await fs.stat(workflowPath);
@@ -75,6 +89,23 @@ export async function POST(request: NextRequest) {
         );
       }
     } catch (dirError) {
+      const err = dirError as NodeJS.ErrnoException;
+      const isNotFound =
+        err?.code === "ENOENT" ||
+        (typeof err?.message === "string" &&
+          (err.message.includes("ENOENT") || err.message.includes("no such file or directory")));
+
+      if (!isNotFound) {
+        logger.warn('file.error', 'Workflow image save failed: directory validation error', {
+          workflowPath,
+          error: dirError instanceof Error ? dirError.message : 'Unknown error',
+        });
+        return NextResponse.json(
+          { success: false, error: "Directory validation failed" },
+          { status: 400 }
+        );
+      }
+
       try {
         await fs.mkdir(workflowPath, { recursive: true });
         logger.info('file.save', 'Created workflow directory for image save', {
@@ -176,6 +207,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Validate path to prevent traversal attacks
+    const pathValidation = validateWorkflowPath(workflowPath);
+    if (!pathValidation.valid) {
+      logger.warn('file.error', 'Workflow image load failed: invalid path', {
+        workflowPath,
+        error: pathValidation.error,
+      });
+      return NextResponse.json(
+        { success: false, error: pathValidation.error },
+        { status: 400 }
+      );
+    }
+
     // Sanitize imageId to prevent path traversal
     const safeImageId = path.basename(imageId);
     if (safeImageId !== imageId || imageId.includes('..')) {

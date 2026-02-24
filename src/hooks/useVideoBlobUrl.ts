@@ -17,13 +17,8 @@ import { useEffect, useRef, useState } from "react";
 export function useVideoBlobUrl(videoUrl: string | null): string | null {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const prevBlobUrlRef = useRef<string | null>(null);
-  const prevInputRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Input unchanged — skip
-    if (videoUrl === prevInputRef.current) return;
-    prevInputRef.current = videoUrl;
-
     // Revoke previous blob URL
     if (prevBlobUrlRef.current) {
       URL.revokeObjectURL(prevBlobUrlRef.current);
@@ -47,11 +42,13 @@ export function useVideoBlobUrl(videoUrl: string | null): string | null {
       setBlobUrl(videoUrl);
 
       let cancelled = false;
+      let createdUrl: string | null = null;
       fetch(videoUrl)
         .then((r) => r.blob())
         .then((blob) => {
           if (cancelled) return;
           const url = URL.createObjectURL(blob);
+          createdUrl = url;
           prevBlobUrlRef.current = url;
           setBlobUrl(url);
         })
@@ -61,6 +58,10 @@ export function useVideoBlobUrl(videoUrl: string | null): string | null {
 
       return () => {
         cancelled = true;
+        // If a blob URL was created after we decided to cancel, revoke it
+        if (createdUrl && createdUrl !== prevBlobUrlRef.current) {
+          URL.revokeObjectURL(createdUrl);
+        }
       };
     }
 

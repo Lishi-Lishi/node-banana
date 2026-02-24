@@ -123,10 +123,11 @@ function toLabel(name: string): string {
  * Image inputs must be strings (URLs or base64) or arrays of strings.
  * Integers, booleans, numbers with "image" in the name are NOT image inputs.
  */
-function isImageInput(name: string, prop: Record<string, unknown>): boolean {
+function isImageInput(name: string, prop: Record<string, unknown>, schemaComponents?: Record<string, unknown>): boolean {
   // First check: must be a string type (images are URLs or base64 strings)
   // Integers, booleans, numbers are NEVER image inputs regardless of name
-  const propType = prop.type as string | undefined;
+  const resolved = resolvePropertyType(prop, schemaComponents);
+  const propType = resolved.type;
   if (propType !== "string" && propType !== "array") {
     return false;
   }
@@ -146,8 +147,8 @@ function isImageInput(name: string, prop: Record<string, unknown>): boolean {
     return false;
   }
 
-  // Check format hints (OpenAPI format field) - strong signal for image URLs
-  const format = prop.format as string | undefined;
+  // Check format hints (OpenAPI format field or resolved format) - strong signal for image URLs
+  const format = (prop.format ?? resolved.format) as string | undefined;
   if (format === "uri" || format === "data-uri" || format === "binary") {
     // Only treat as image if name also suggests it's an image
     if (IMAGE_INPUT_PATTERNS.includes(name) ||
@@ -216,6 +217,68 @@ function resolveRef(
 }
 
 /**
+ * Resolve the effective type and format from an OpenAPI property.
+ *
+ * Handles wrapper patterns used by code generators (e.g. Pydantic → OpenAPI):
+ *   - anyOf / oneOf: picks the first non-null type (nullable pattern)
+ *   - allOf: merges referenced schemas
+ *   - $ref: resolves from schemaComponents
+ *   - Direct type: returns immediately (fast path — no behavior change)
+ */
+function resolvePropertyType(
+  prop: Record<string, unknown>,
+  schemaComponents?: Record<string, unknown>
+): { type?: string; format?: string } {
+  // Fast path: direct type is defined — existing behaviour, no change
+  if (prop.type !== undefined) {
+    return { type: prop.type as string, format: prop.format as string | undefined };
+  }
+
+  // anyOf / oneOf — pick the first non-null variant
+  const variants = (prop.anyOf ?? prop.oneOf) as Array<Record<string, unknown>> | undefined;
+  if (variants && Array.isArray(variants)) {
+    for (const variant of variants) {
+      // Resolve $ref inside variant
+      if (variant.$ref && typeof variant.$ref === "string" && schemaComponents) {
+        const resolved = resolveRef(variant.$ref as string, schemaComponents);
+        if (resolved && resolved.type && resolved.type !== "null") {
+          return { type: resolved.type as string, format: (resolved.format ?? prop.format) as string | undefined };
+        }
+      }
+      if (variant.type && variant.type !== "null") {
+        return { type: variant.type as string, format: (variant.format ?? prop.format) as string | undefined };
+      }
+    }
+  }
+
+  // allOf — merge referenced schemas
+  const allOf = prop.allOf as Array<Record<string, unknown>> | undefined;
+  if (allOf && Array.isArray(allOf) && schemaComponents) {
+    for (const item of allOf) {
+      if (item.$ref && typeof item.$ref === "string") {
+        const resolved = resolveRef(item.$ref as string, schemaComponents);
+        if (resolved && resolved.type) {
+          return { type: resolved.type as string, format: (resolved.format ?? prop.format) as string | undefined };
+        }
+      }
+      if (item.type) {
+        return { type: item.type as string, format: (item.format ?? prop.format) as string | undefined };
+      }
+    }
+  }
+
+  // $ref at top level
+  if (prop.$ref && typeof prop.$ref === "string" && schemaComponents) {
+    const resolved = resolveRef(prop.$ref as string, schemaComponents);
+    if (resolved && resolved.type) {
+      return { type: resolved.type as string, format: (resolved.format ?? prop.format) as string | undefined };
+    }
+  }
+
+  return {};
+}
+
+/**
  * Convert OpenAPI schema property to ModelParameter
  */
 function convertSchemaProperty(
@@ -229,51 +292,76 @@ function convertSchemaProperty(
     return null;
   }
 
-  // Determine type and extract enum from allOf/$ref if present
+  // Determine type and extract enum from allOf/$ref/anyOf/oneOf if present
   let type: ModelParameter["type"] = "string";
   let enumValues: unknown[] | undefined;
   let resolvedDefault: unknown;
   let resolvedDescription: string | undefined;
 
-  const schemaType = prop.type as string | undefined;
-  const allOf = prop.allOf as Array<Record<string, unknown>> | undefined;
+  // Use resolvePropertyType() to handle anyOf/oneOf/allOf/$ref patterns
+  const resolved = resolvePropertyType(prop, schemaComponents);
+  const effectiveType = resolved.type;
 
-  if (schemaType === "integer") {
+  if (effectiveType === "integer") {
     type = "integer";
-  } else if (schemaType === "number") {
+  } else if (effectiveType === "number") {
     type = "number";
-  } else if (schemaType === "boolean") {
+  } else if (effectiveType === "boolean") {
     type = "boolean";
-  } else if (schemaType === "array") {
+  } else if (effectiveType === "array") {
     type = "array";
-  } else if (allOf && allOf.length > 0 && schemaComponents) {
-    // Handle allOf with $ref - resolve references and extract enum/type
+  }
+
+  // Extract enum/default/description from allOf with $ref
+  const allOf = prop.allOf as Array<Record<string, unknown>> | undefined;
+  if (allOf && allOf.length > 0 && schemaComponents) {
     for (const item of allOf) {
       const itemRef = item.$ref as string | undefined;
       if (itemRef) {
-        const resolved = resolveRef(itemRef, schemaComponents);
-        if (resolved) {
-          // Extract type from resolved schema
-          if (resolved.type === "integer") type = "integer";
-          else if (resolved.type === "number") type = "number";
-          else if (resolved.type === "boolean") type = "boolean";
-
-          // Extract enum from resolved schema
-          if (Array.isArray(resolved.enum)) {
-            enumValues = resolved.enum;
+        const refResolved = resolveRef(itemRef, schemaComponents);
+        if (refResolved) {
+          if (Array.isArray(refResolved.enum)) {
+            enumValues = refResolved.enum;
           }
-          // Extract default from resolved schema
-          if (resolved.default !== undefined && resolvedDefault === undefined) {
-            resolvedDefault = resolved.default;
+          if (refResolved.default !== undefined && resolvedDefault === undefined) {
+            resolvedDefault = refResolved.default;
           }
-          // Extract description from resolved schema
-          if (resolved.description && !resolvedDescription) {
-            resolvedDescription = resolved.description as string;
+          if (refResolved.description && !resolvedDescription) {
+            resolvedDescription = refResolved.description as string;
           }
         }
       } else if (Array.isArray(item.enum)) {
-        // Direct enum in allOf item
         enumValues = item.enum;
+      }
+    }
+  }
+
+  // Extract enum/default/description from anyOf/oneOf variants
+  const variants = (prop.anyOf ?? prop.oneOf) as Array<Record<string, unknown>> | undefined;
+  if (variants && Array.isArray(variants)) {
+    for (const variant of variants) {
+      if (variant.type === "null") continue;
+      // Resolve $ref inside variant
+      if (variant.$ref && typeof variant.$ref === "string" && schemaComponents) {
+        const refResolved = resolveRef(variant.$ref as string, schemaComponents);
+        if (refResolved) {
+          if (Array.isArray(refResolved.enum) && !enumValues) {
+            enumValues = refResolved.enum;
+          }
+          if (refResolved.default !== undefined && resolvedDefault === undefined) {
+            resolvedDefault = refResolved.default;
+          }
+          if (refResolved.description && !resolvedDescription) {
+            resolvedDescription = refResolved.description as string;
+          }
+        }
+      } else {
+        if (Array.isArray(variant.enum) && !enumValues) {
+          enumValues = variant.enum;
+        }
+        if (variant.default !== undefined && resolvedDefault === undefined) {
+          resolvedDefault = variant.default;
+        }
       }
     }
   }
@@ -439,14 +527,15 @@ function extractParametersFromSchema(
   for (const [name, prop] of Object.entries(properties)) {
     // Check if this is a connectable input (image or text)
     // Pass both name AND prop to check schema type, not just name
-    if (isImageInput(name, prop)) {
+    if (isImageInput(name, prop, schemaComponents)) {
+      const resolvedType = resolvePropertyType(prop, schemaComponents).type;
       inputs.push({
         name,
         type: "image",
         required: required.includes(name),
         label: toLabel(name),
         description: prop.description as string | undefined,
-        isArray: prop.type === "array",
+        isArray: resolvedType === "array",
       });
       continue;
     }

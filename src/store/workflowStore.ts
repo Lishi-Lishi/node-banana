@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create, StateCreator } from "zustand";
 import { useShallow } from "zustand/shallow";
 import {
   Connection,
@@ -333,6 +333,7 @@ interface WorkflowStore {
 
   // Canvas navigation settings actions
   updateCanvasNavigationSettings: (settings: CanvasNavigationSettings) => void;
+
 }
 
 let nodeIdCounter = 0;
@@ -369,7 +370,7 @@ async function waitForPendingImageSyncs(timeout: number = 60000): Promise<void> 
 export { generateWorkflowId, saveGenerateImageDefaults, saveNanoBananaDefaults } from "./utils/localStorage";
 export { GROUP_COLORS } from "./utils/nodeDefaults";
 
-export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
+const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   nodes: [],
   edges: [],
   edgeStyle: "curved" as EdgeStyle,
@@ -1167,6 +1168,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         set({ isRunning: false, currentNodeIds: [] });
         await logger.endSession();
         return;
+      } else if (node.type === "output") {
+        await executeOutput(executionCtx);
+        set({ isRunning: false, currentNodeIds: [] });
+        await logger.endSession();
+        return;
       }
 
       // After regeneration, execute directly connected downstream consumer nodes
@@ -1535,8 +1541,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const configs = loadSaveConfigs();
     const savedConfig = workflow.id ? configs[workflow.id] : null;
 
-    // Determine the workflow directory path (passed in, from saved config, or embedded in workflow)
-    const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath;
+    // Determine the workflow directory path (passed in, from saved config, or embedded in legacy workflow JSON)
+    const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath || null;
 
     // Hydrate images if we have a directory path and the workflow has image refs
     let hydratedWorkflow = workflow;
@@ -1731,7 +1737,6 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         version: 1,
         id: workflowId,
         name: workflowName,
-        directoryPath: saveDirectoryPath,
         nodes: currentNodes,
         edges,
         edgeStyle,
@@ -1840,7 +1845,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       return false;
     }
 
-    const { saveDirectoryPath, workflowId: prevId, workflowName: prevName } = get();
+    const { saveDirectoryPath, workflowId: prevId, workflowName: prevName, hasUnsavedChanges: prevUnsaved } = get();
     if (!saveDirectoryPath) {
       return false;
     }
@@ -1856,7 +1861,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const success = await get().saveToFile();
     if (!success) {
       // Rollback to previous identity on failure
-      set({ workflowId: prevId, workflowName: prevName });
+      set({ workflowId: prevId, workflowName: prevName, hasUnsavedChanges: prevUnsaved });
     }
     return success;
   },
@@ -2111,7 +2116,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ canvasNavigationSettings: settings });
     saveCanvasNavigationSettings(settings);
   },
-}));
+
+});
+
+export const useWorkflowStore = create<WorkflowStore>()(workflowStoreImpl);
 
 /**
  * Stable hook for provider API keys.

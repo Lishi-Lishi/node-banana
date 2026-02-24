@@ -18,14 +18,42 @@ const MAX_REGEX_INPUT_LENGTH = 100_000;
 
 /**
  * Detect regex patterns prone to catastrophic backtracking (ReDoS).
- * Rejects nested quantifiers like (a+)+, (a*)+, (a+)*, etc.
+ * Rejects nested quantifiers like (a+)+, (a*)+, ((a+))+, etc.
+ * Uses character-by-character parsing to track nesting depth.
  */
 function isUnsafePattern(pattern: string): boolean {
-  // Strip /pattern/flags wrapper to inspect the body
   const slashFormat = pattern.match(/^\/(.+)\/[a-z]*$/i);
   const body = slashFormat ? slashFormat[1] : pattern;
-  // Nested quantifiers: a group containing a quantifier, followed by another quantifier
-  return /\([^)]*[+*]\)[+*{]/.test(body);
+
+  // Track groups: when we see ')' followed by a quantifier,
+  // check if anything inside that group also had a quantifier.
+  let depth = 0;
+  const quantifierAtDepth: boolean[] = [];
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '\\') { i++; continue; } // skip escaped chars
+    if (ch === '(') {
+      depth++;
+      quantifierAtDepth[depth] = false;
+    } else if (ch === ')') {
+      const hadQuantifier = quantifierAtDepth[depth] || false;
+      depth = Math.max(0, depth - 1);
+      // Check if this closing paren is followed by a quantifier
+      const next = body[i + 1];
+      if (next === '+' || next === '*' || next === '{') {
+        if (hadQuantifier) return true; // nested quantifier!
+        // Mark parent depth as having a quantifier
+        quantifierAtDepth[depth] = true;
+      } else if (hadQuantifier) {
+        // Group contained quantifier but isn't followed by one - propagate to parent
+        quantifierAtDepth[depth] = true;
+      }
+    } else if ((ch === '+' || ch === '*') && depth > 0) {
+      quantifierAtDepth[depth] = true;
+    }
+  }
+  return false;
 }
 
 function parseRegexPattern(pattern: string): RegExp {

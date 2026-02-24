@@ -80,6 +80,21 @@ describe("parseTextToArray", () => {
     }
   });
 
+  it("rejects deeply nested quantifier patterns that bypass simple regex checks", () => {
+    const deeplyNestedPatterns = ["((a+))+", "((a*)+)", "(((x+))+)+"];
+    for (const pattern of deeplyNestedPatterns) {
+      const result = parseTextToArray("test", {
+        splitMode: "regex",
+        delimiter: "*",
+        regexPattern: pattern,
+        trimItems: true,
+        removeEmpty: true,
+      });
+      expect(result.items).toEqual([]);
+      expect(result.error).toContain("nested quantifiers");
+    }
+  });
+
   it("allows safe regex patterns", () => {
     const safePatterns = ["\\d+", "[,;]+", "\\s+", "(a|b)"];
     for (const pattern of safePatterns) {

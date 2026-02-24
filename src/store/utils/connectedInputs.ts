@@ -91,7 +91,10 @@ function getSourceOutput(
     const arrayData = sourceNode.data as ArrayNodeData;
     const dataIndex = edgeData?.arrayItemIndex;
     if (typeof dataIndex === "number" && Number.isInteger(dataIndex) && dataIndex >= 0) {
-      return { type: "text", value: arrayData.outputItems[dataIndex] ?? null };
+      const items = arrayData.outputItems;
+      if (items.length === 0) return { type: "text", value: null };
+      const clampedIndex = dataIndex % items.length;
+      return { type: "text", value: items[clampedIndex] ?? null };
     }
     if (sourceHandle?.startsWith("text-")) {
       const index = Number(sourceHandle.replace("text-", ""));

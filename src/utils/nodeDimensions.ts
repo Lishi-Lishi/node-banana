@@ -16,20 +16,29 @@ export function getImageDimensions(
       return;
     }
 
+    let resolved = false;
     const img = new Image();
     const cleanup = () => {
       img.onload = null;
       img.onerror = null;
       img.src = "";
     };
-    img.onload = () => {
-      const dims = { width: img.naturalWidth, height: img.naturalHeight };
+    const safeResolve = (value: { width: number; height: number } | null) => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
-      resolve(dims);
+      resolve(value);
+    };
+
+    const timeout = setTimeout(() => safeResolve(null), 10_000);
+
+    img.onload = () => {
+      clearTimeout(timeout);
+      safeResolve({ width: img.naturalWidth, height: img.naturalHeight });
     };
     img.onerror = () => {
-      cleanup();
-      resolve(null);
+      clearTimeout(timeout);
+      safeResolve(null);
     };
     img.src = base64DataUrl;
   });

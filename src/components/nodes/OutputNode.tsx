@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, useEffect, useRef } from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useCommentNavigation } from "@/hooks/useCommentNavigation";
@@ -14,7 +14,13 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
   const nodeData = data;
   const commentNavigation = useCommentNavigation(id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
+  const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
+  const connectedEdgeCount = useWorkflowStore(
+    (state) => state.edges.filter((edge) => edge.target === id).length
+  );
+  const isRunning = useWorkflowStore((state) => state.isRunning);
   const [showLightbox, setShowLightbox] = useState(false);
+  const previousEdgeCountRef = useRef<number | null>(null);
 
   // Determine if content is audio
   const isAudio = useMemo(() => {
@@ -42,6 +48,24 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
   }, [nodeData.audio, nodeData.video, nodeData.image]);
 
   const videoBlobUrl = useVideoBlobUrl(isVideo ? contentSrc ?? null : null);
+
+  // Auto-trigger execution when a new connection is made
+  useEffect(() => {
+    if (previousEdgeCountRef.current === null) {
+      // First run — just record the baseline, don't trigger
+      previousEdgeCountRef.current = connectedEdgeCount;
+      return;
+    }
+    if (connectedEdgeCount > previousEdgeCountRef.current) {
+      regenerateNode(id);
+    }
+    previousEdgeCountRef.current = connectedEdgeCount;
+  }, [connectedEdgeCount, id, regenerateNode]);
+
+  // Handle Run button click
+  const handleRun = useCallback(() => {
+    regenerateNode(id);
+  }, [id, regenerateNode]);
 
   const handleDownload = useCallback(async () => {
     if (!contentSrc) return;
@@ -91,6 +115,8 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
         comment={nodeData.comment}
         onCustomTitleChange={(title) => updateNodeData(id, { customTitle: title || undefined })}
         onCommentChange={(comment) => updateNodeData(id, { comment: comment || undefined })}
+        onRun={handleRun}
+        isExecuting={isRunning}
         selected={selected}
         className="min-w-[200px]"
         commentNavigation={commentNavigation ?? undefined}

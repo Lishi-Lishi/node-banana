@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { logger } from "@/utils/logger";
+import { validateWorkflowPath } from "@/utils/pathValidation";
 
 export const maxDuration = 300; // 5 minute timeout for large workflow files
 
@@ -31,6 +32,19 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json(
         { success: false, error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+
+    // Validate path to prevent traversal attacks
+    const pathValidation = validateWorkflowPath(directoryPath);
+    if (!pathValidation.valid) {
+      logger.warn('file.error', 'Workflow save failed: invalid path', {
+        directoryPath,
+        error: pathValidation.error,
+      });
+      return NextResponse.json(
+        { success: false, error: pathValidation.error },
         { status: 400 }
       );
     }
@@ -74,7 +88,7 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(
           { success: false, error: "Could not create directory" },
-          { status: 400 }
+          { status: 500 }
         );
       }
     }
@@ -139,6 +153,19 @@ export async function GET(request: NextRequest) {
     logger.warn('file.load', 'Directory validation failed: missing path parameter');
     return NextResponse.json(
       { success: false, error: "Path parameter required" },
+      { status: 400 }
+    );
+  }
+
+  // Validate path to prevent traversal attacks
+  const pathValidation = validateWorkflowPath(directoryPath);
+  if (!pathValidation.valid) {
+    logger.warn('file.error', 'Directory validation failed: invalid path', {
+      directoryPath,
+      error: pathValidation.error,
+    });
+    return NextResponse.json(
+      { success: false, error: pathValidation.error },
       { status: 400 }
     );
   }

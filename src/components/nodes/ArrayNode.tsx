@@ -150,8 +150,8 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
 
   // Reset selection if it no longer points to a valid parsed item.
   useEffect(() => {
-    const selected = nodeData.selectedOutputIndex;
-    if (selected !== null && (selected < 0 || selected >= previewItems.length)) {
+    const currentSelection = nodeData.selectedOutputIndex;
+    if (currentSelection !== null && (currentSelection < 0 || currentSelection >= previewItems.length)) {
       updateNodeData(id, { selectedOutputIndex: null });
     }
   }, [id, nodeData.selectedOutputIndex, previewItems.length, updateNodeData]);
@@ -163,9 +163,11 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
     const newHeight = Math.max(baseHeight, 270 + previewItems.length * perItemHeight);
 
     setNodes((nodes) =>
-      nodes.map((node) =>
-        node.id === id ? { ...node, style: { ...node.style, height: newHeight } } : node
-      )
+      nodes.map((node) => {
+        if (node.id !== id) return node;
+        if ((node.style?.height as number) === newHeight) return node;
+        return { ...node, style: { ...node.style, height: newHeight } };
+      })
     );
   }, [id, previewItems.length, setNodes]);
 

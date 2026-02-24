@@ -451,6 +451,329 @@ describe("/api/models/[modelId] schema endpoint", () => {
     });
   });
 
+  describe("real Fal Kling v2.6 pro image-to-video schema", () => {
+    it("should detect both start_image_url and end_image_url as image inputs", async () => {
+      // Exact schema structure from Fal API for fal-ai/kling-video/v2.6/pro/image-to-video
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          models: [{
+            openapi: {
+              openapi: "3.0.4",
+              components: {
+                schemas: {
+                  KlingVideoV26ProImageToVideoInput: {
+                    title: "ImageToVideoV26ProRequest",
+                    type: "object",
+                    properties: {
+                      prompt: {
+                        title: "Prompt",
+                        type: "string",
+                        maxLength: 2500,
+                      },
+                      duration: {
+                        enum: ["5", "10"],
+                        title: "Duration",
+                        type: "string",
+                        description: "The duration of the generated video in seconds",
+                        default: "5",
+                      },
+                      generate_audio: {
+                        title: "Generate Audio",
+                        type: "boolean",
+                        description: "Whether to generate native audio for the video.",
+                        default: true,
+                      },
+                      start_image_url: {
+                        description: "URL of the image to be used for the video",
+                        type: "string",
+                        title: "Start Image Url",
+                      },
+                      end_image_url: {
+                        title: "End Image Url",
+                        type: "string",
+                        description: "URL of the image to be used for the end of the video",
+                      },
+                      negative_prompt: {
+                        title: "Negative Prompt",
+                        type: "string",
+                        maxLength: 2500,
+                        default: "blur, distort, and low quality",
+                      },
+                    },
+                    required: ["prompt", "start_image_url"],
+                  },
+                },
+              },
+              paths: {
+                "/fal-ai/kling-video/v2.6/pro/image-to-video": {
+                  post: {
+                    requestBody: {
+                      required: true,
+                      content: {
+                        "application/json": {
+                          schema: {
+                            $ref: "#/components/schemas/KlingVideoV26ProImageToVideoInput",
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          }],
+        }),
+      });
+
+      const modelId = `fal-ai/kling-video-real-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+
+      const imageInputNames = data.inputs
+        .filter((i: { type: string }) => i.type === "image")
+        .map((i: { name: string }) => i.name);
+      const textInputNames = data.inputs
+        .filter((i: { type: string }) => i.type === "text")
+        .map((i: { name: string }) => i.name);
+      const paramNames = data.parameters.map((p: { name: string }) => p.name);
+
+      // Both image URL fields should be detected as image inputs
+      expect(imageInputNames).toContain("start_image_url");
+      expect(imageInputNames).toContain("end_image_url");
+
+      // Text inputs
+      expect(textInputNames).toContain("prompt");
+      expect(textInputNames).toContain("negative_prompt");
+
+      // Parameters (not image or text inputs)
+      expect(paramNames).toContain("duration");
+      expect(paramNames).toContain("generate_audio");
+
+      // Image inputs should NOT appear as parameters
+      expect(paramNames).not.toContain("start_image_url");
+      expect(paramNames).not.toContain("end_image_url");
+    });
+  });
+
+  describe("anyOf/oneOf nullable schema patterns", () => {
+    // Helper to create fal.ai response with components.schemas for $ref resolution
+    function createFalModelResponseWithComponents(
+      inputProperties: Record<string, unknown>,
+      required: string[] = [],
+      components?: Record<string, unknown>
+    ) {
+      return {
+        ok: true,
+        json: () => Promise.resolve({
+          models: [{
+            openapi: {
+              paths: {
+                "/": {
+                  post: {
+                    requestBody: {
+                      content: {
+                        "application/json": {
+                          schema: {
+                            $ref: "#/components/schemas/Input",
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              components: {
+                schemas: {
+                  Input: {
+                    type: "object",
+                    properties: inputProperties,
+                    required,
+                  },
+                  ...components,
+                },
+              },
+            },
+          }],
+        }),
+      };
+    }
+
+    it("should detect anyOf nullable string as image input (Kling pattern)", async () => {
+      // Exact pattern from Kling v2.6 image-to-video on Fal
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          prompt: {
+            type: "string",
+            description: "Text prompt",
+          },
+          image_url: {
+            type: "string",
+            description: "The URL of the image",
+          },
+          end_image_url: {
+            anyOf: [{ type: "string" }, { type: "null" }],
+            description: "The URL of the end image",
+          },
+        }, ["prompt", "image_url"])
+      );
+
+      const modelId = `fal-ai/kling-anyof-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const imageInputNames = data.inputs
+        .filter((i: { type: string }) => i.type === "image")
+        .map((i: { name: string }) => i.name);
+
+      // Both image_url and end_image_url should be image inputs
+      expect(imageInputNames).toContain("image_url");
+      expect(imageInputNames).toContain("end_image_url");
+    });
+
+    it("should detect anyOf with format: uri as image input", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          reference_image: {
+            anyOf: [
+              { type: "string", format: "uri" },
+              { type: "null" },
+            ],
+            description: "Reference image URL",
+          },
+        })
+      );
+
+      const modelId = `fal-ai/anyof-uri-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const imageInputNames = data.inputs
+        .filter((i: { type: string }) => i.type === "image")
+        .map((i: { name: string }) => i.name);
+
+      expect(imageInputNames).toContain("reference_image");
+    });
+
+    it("should NOT detect anyOf with non-string types as image input", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          image_guidance_scale: {
+            anyOf: [{ type: "number" }, { type: "null" }],
+            description: "Image guidance scale",
+          },
+          image_count: {
+            anyOf: [{ type: "integer" }, { type: "null" }],
+            description: "Number of images",
+          },
+        })
+      );
+
+      const modelId = `fal-ai/anyof-nonstring-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const paramNames = data.parameters.map((p: { name: string }) => p.name);
+      const inputNames = data.inputs.map((i: { name: string }) => i.name);
+
+      expect(paramNames).toContain("image_guidance_scale");
+      expect(paramNames).toContain("image_count");
+      expect(inputNames).not.toContain("image_guidance_scale");
+      expect(inputNames).not.toContain("image_count");
+    });
+
+    it("should handle oneOf pattern same as anyOf", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          start_image: {
+            oneOf: [{ type: "string" }, { type: "null" }],
+            description: "The start image URL",
+          },
+        })
+      );
+
+      const modelId = `fal-ai/oneof-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const imageInputNames = data.inputs
+        .filter((i: { type: string }) => i.type === "image")
+        .map((i: { name: string }) => i.name);
+
+      expect(imageInputNames).toContain("start_image");
+    });
+
+    it("should resolve anyOf parameter types correctly (not default to string)", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          seed: {
+            anyOf: [{ type: "integer" }, { type: "null" }],
+            description: "Random seed",
+          },
+          guidance_scale: {
+            anyOf: [{ type: "number" }, { type: "null" }],
+            description: "Guidance scale",
+            default: 7.5,
+          },
+        })
+      );
+
+      const modelId = `fal-ai/anyof-types-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const seedParam = data.parameters.find((p: { name: string }) => p.name === "seed");
+      const guidanceParam = data.parameters.find((p: { name: string }) => p.name === "guidance_scale");
+
+      expect(seedParam?.type).toBe("integer");
+      expect(guidanceParam?.type).toBe("number");
+    });
+
+    it("should NOT classify anyOf boolean with image in name as image input", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createFalModelResponseWithComponents({
+          enable_image_enhancement: {
+            anyOf: [{ type: "boolean" }, { type: "null" }],
+            description: "Enable image enhancement",
+            default: false,
+          },
+        })
+      );
+
+      const modelId = `fal-ai/anyof-bool-${testCounter}`;
+      const request = createMockSchemaRequest(modelId, "fal");
+      const response = await GET(request, { params: Promise.resolve({ modelId }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+
+      const paramNames = data.parameters.map((p: { name: string }) => p.name);
+      const inputNames = data.inputs.map((i: { name: string }) => i.name);
+
+      expect(paramNames).toContain("enable_image_enhancement");
+      expect(inputNames).not.toContain("enable_image_enhancement");
+    });
+  });
+
   describe("error handling", () => {
     it("should return 400 for invalid provider", async () => {
       const request = createMockSchemaRequest("test/model", "invalid");

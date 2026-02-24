@@ -13,9 +13,11 @@ interface ValidationResult {
 
 const VALID_NODE_TYPES: NodeType[] = [
   "imageInput",
+  "audioInput",
   "annotation",
   "prompt",
   "array",
+  "promptConstructor",
   "nanoBanana",
   "generateVideo",
   "generate3d",
@@ -23,9 +25,16 @@ const VALID_NODE_TYPES: NodeType[] = [
   "llmGenerate",
   "splitGrid",
   "output",
+  "outputGallery",
+  "imageCompare",
+  "videoStitch",
+  "easeCurve",
+  "videoTrim",
+  "videoFrameGrab",
+  "glbViewer",
 ];
 
-const VALID_HANDLE_TYPES = ["image", "text", "audio", "reference"];
+const VALID_HANDLE_TYPES = ["image", "text", "audio", "video", "easeCurve", "3d", "reference"];
 
 // Default node dimensions
 const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = {

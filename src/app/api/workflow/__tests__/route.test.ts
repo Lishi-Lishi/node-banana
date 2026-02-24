@@ -249,6 +249,51 @@ describe("/api/workflow route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toBe("Disk full");
     });
+
+    it("should reject path traversal attempts", async () => {
+      const request = createMockPostRequest({
+        directoryPath: "/test/../etc/passwd",
+        filename: "workflow",
+        workflow: { nodes: [], edges: [] },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("Path contains traversal sequences");
+    });
+
+    it("should reject non-absolute paths", async () => {
+      const request = createMockPostRequest({
+        directoryPath: "relative/path",
+        filename: "workflow",
+        workflow: { nodes: [], edges: [] },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("Path must be absolute");
+    });
+
+    it("should reject dangerous system paths", async () => {
+      const request = createMockPostRequest({
+        directoryPath: "/etc/workflows",
+        filename: "workflow",
+        workflow: { nodes: [], edges: [] },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("Access to /etc is not allowed");
+    });
   });
 
   describe("GET - Validate directory", () => {
@@ -300,6 +345,26 @@ describe("/api/workflow route", () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error).toBe("Path parameter required");
+    });
+
+    it("should reject path traversal attempts in GET", async () => {
+      const request = createMockGetRequest({ path: "/test/../etc" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("Path contains traversal sequences");
+    });
+
+    it("should reject non-absolute paths in GET", async () => {
+      const request = createMockGetRequest({ path: "relative/path" });
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("Path must be absolute");
     });
   });
 });

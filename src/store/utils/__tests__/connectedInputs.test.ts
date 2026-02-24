@@ -140,6 +140,60 @@ describe("getConnectedInputsPure", () => {
     expect(result.text).toBe("three");
   });
 
+  it("should wrap out-of-bounds arrayItemIndex via modulo", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[\"one\",\"two\"]", outputItems: ["one", "two"] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen-stale",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text",
+      targetHandle: "text",
+      data: { arrayItemIndex: 3 }, // index 3 on 2-item array wraps to index 1
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBe("two");
+  });
+
+  it("should return null for out-of-bounds arrayItemIndex on empty array", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[]", outputItems: [] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen-empty",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text",
+      targetHandle: "text",
+      data: { arrayItemIndex: 0 },
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBeNull();
+  });
+
+  it("should wrap large arrayItemIndex correctly", () => {
+    const nodes = [
+      makeNode("arr", "array", { outputText: "[\"a\",\"b\",\"c\"]", outputItems: ["a", "b", "c"] }),
+      makeNode("gen", "nanoBanana"),
+    ];
+    const edges = [{
+      id: "arr-gen-large",
+      source: "arr",
+      target: "gen",
+      sourceHandle: "text",
+      targetHandle: "text",
+      data: { arrayItemIndex: 7 }, // 7 % 3 = 1
+    }] as WorkflowEdge[];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    expect(result.text).toBe("b");
+  });
+
   it("should extract text from promptConstructor outputText", () => {
     const nodes = [
       makeNode("pc", "promptConstructor", { outputText: "constructed", template: "tmpl" }),
