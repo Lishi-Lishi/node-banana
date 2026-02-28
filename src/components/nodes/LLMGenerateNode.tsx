@@ -10,6 +10,7 @@ import { LLMGenerateNodeData, LLMProvider, LLMModelType } from "@/types";
 const PROVIDERS: { value: LLMProvider; label: string }[] = [
   { value: "google", label: "Google" },
   { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
 ];
 
 const MODELS: Record<LLMProvider, { value: LLMModelType; label: string }[]> = {
@@ -17,10 +18,16 @@ const MODELS: Record<LLMProvider, { value: LLMModelType; label: string }[]> = {
     { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { value: "gemini-3-pro-preview", label: "Gemini 3.0 Pro" },
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
   ],
   openai: [
     { value: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
     { value: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+  ],
+  anthropic: [
+    { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+    { value: "claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
   ],
 };
 
@@ -35,12 +42,17 @@ export function LLMGenerateNode({ id, data, selected }: NodeProps<LLMGenerateNod
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       const newProvider = e.target.value as LLMProvider;
       const firstModelForProvider = MODELS[newProvider][0].value;
-      updateNodeData(id, {
+      const updates: Partial<LLMGenerateNodeData> = {
         provider: newProvider,
-        model: firstModelForProvider
-      });
+        model: firstModelForProvider,
+      };
+      // Anthropic limits temperature to 0-1
+      if (newProvider === "anthropic" && nodeData.temperature > 1) {
+        updates.temperature = 1;
+      }
+      updateNodeData(id, updates);
     },
-    [id, updateNodeData]
+    [id, updateNodeData, nodeData.temperature]
   );
 
   const handleModelChange = useCallback(
@@ -266,7 +278,7 @@ export function LLMGenerateNode({ id, data, selected }: NodeProps<LLMGenerateNod
                 <input
                   type="range"
                   min="0"
-                  max="2"
+                  max={provider === "anthropic" ? "1" : "2"}
                   step="0.1"
                   value={nodeData.temperature}
                   onChange={handleTemperatureChange}

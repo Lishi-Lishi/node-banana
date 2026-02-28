@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-//import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { LLMGenerateRequest, LLMGenerateResponse, LLMModelType } from "@/types";
 import { logger } from "@/utils/logger";
 
@@ -15,6 +15,7 @@ const GOOGLE_MODEL_MAP: Record<string, string> = {
   "gemini-2.5-flash": "gemini-2.5-flash",
   "gemini-3-flash-preview": "gemini-3-flash-preview",
   "gemini-3-pro-preview": "gemini-3-pro-preview",
+  "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
 };
 
 const OPENAI_MODEL_MAP: Record<string, string> = {
@@ -22,10 +23,12 @@ const OPENAI_MODEL_MAP: Record<string, string> = {
   "gpt-4.1-nano": "gpt-4.1-nano",
 };
 
-/**
- * 核心修改：使用原生 Fetch 调用云雾/Google API
- * 替代了原来的 SDK 调用
- */
+const ANTHROPIC_MODEL_MAP: Record<string, string> = {
+  "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+  "claude-haiku-4.5": "claude-haiku-4-5-20251001",
+  "claude-opus-4.6": "claude-opus-4-6",
+};
+
 async function generateWithGoogle(
   prompt: string,
   model: LLMModelType,
@@ -35,121 +38,79 @@ async function generateWithGoogle(
   requestId?: string,
   userApiKey?: string | null
 ): Promise<string> {
-  // 1. 获取 Key
+  // User-provided key takes precedence over env variable
   const apiKey = userApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     logger.error('api.error', 'GEMINI_API_KEY not configured', { requestId });
-    throw new Error("GEMINI_API_KEY not configured.");
+    throw new Error("GEMINI_API_KEY not configured. Add it to .env.local or configure in Settings.");
   }
 
-  // 2. 获取 Base URL (新增逻辑)
-  // 默认使用云雾地址，如果 .env.local 没配则兜底到 Google
-  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
-  baseUrl = baseUrl.replace(/\/+$/, ""); // 移除末尾斜杠
+  const ai = new GoogleGenAI({ apiKey });
+  const modelId = GOOGLE_MODEL_MAP[model];
 
-  const modelId = GOOGLE_MODEL_MAP[model] || model;
-
-  logger.info('api.llm', 'Calling Google (Yunwu) API', {
+  logger.info('api.llm', 'Calling Google AI API', {
     requestId,
     model: modelId,
-    endpoint: baseUrl, // 记录一下请求地址方便调试
     temperature,
     maxTokens,
     imageCount: images?.length || 0,
     promptLength: prompt.length,
   });
 
-  // 3. 构建 URL
-  const url = `${baseUrl}/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-
-  // 4. 构建请求内容 (Parts)
-  // 保持原有的多模态逻辑：图片在前，文本在后
-  const parts: any[] = [];
-
-  // 🔥【关键修改】处理图片并添加 Image X 标签
+  // Build multimodal content if images are provided
+  let contents: string | Array<{ inlineData: { mimeType: string; data: string } } | { text: string }>;
   if (images && images.length > 0) {
-    images.forEach((img, index) => {
-      // A. 添加标签 (帮助模型区分图片)
-      parts.push({ text: `Image ${index + 1}:` });
-
-      // B. 添加图片数据
-      const matches = img.match(/^data:(.+?);base64,(.+)$/);
-      if (matches) {
-        parts.push({
-          inlineData: {
-            mimeType: matches[1],
-            data: matches[2],
-          },
-        });
-      } else {
-        // 兜底处理纯 Base64
-        parts.push({
+    contents = [
+      ...images.map((img) => {
+        // Extract base64 data and mime type from data URL
+        const matches = img.match(/^data:(.+?);base64,(.+)$/);
+        if (matches) {
+          return {
+            inlineData: {
+              mimeType: matches[1],
+              data: matches[2],
+            },
+          };
+        }
+        // Fallback: assume PNG if no data URL prefix
+        return {
           inlineData: {
             mimeType: "image/png",
             data: img,
           },
-        });
-      }
-    });
+        };
+      }),
+      { text: prompt },
+    ];
+  } else {
+    contents = prompt;
   }
-
-  // 添加文本 Prompt
-  parts.push({ text: `\nUser Prompt: ${prompt}` });
 
   const startTime = Date.now();
+  const response = await ai.models.generateContent({
+    model: modelId,
+    contents,
+    config: {
+      temperature,
+      maxOutputTokens: maxTokens,
+    },
+  });
+  const duration = Date.now() - startTime;
 
-  // 5. 发送原生请求
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          temperature,
-          maxOutputTokens: maxTokens,
-        },
-      }),
-    });
-
-    const duration = Date.now() - startTime;
-
-    if (!response.ok) {
-      const errText = await response.text();
-      logger.error('api.error', 'Google API request failed', {
-        requestId,
-        status: response.status,
-        error: errText,
-      });
-      throw new Error(`Cloud API error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    
-    // 6. 解析结果 (Native 格式解析)
-    // 路径通常是 candidates[0].content.parts[0].text
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!text) {
-      logger.error('api.error', 'No text in Google API response', { requestId, data });
-      throw new Error("No text in Google API response");
-    }
-
-    logger.info('api.llm', 'Google API response received', {
-      requestId,
-      duration,
-      responseLength: text.length,
-    });
-
-    return text;
-
-  } catch (error: any) {
-    // 捕获 Fetch 错误 (如网络不通)
-    logger.error('api.error', 'Fetch execution failed', { requestId }, error);
-    throw error;
+  // Use the convenient .text property that concatenates all text parts
+  const text = response.text;
+  if (!text) {
+    logger.error('api.error', 'No text in Google AI response', { requestId });
+    throw new Error("No text in Google AI response");
   }
+
+  logger.info('api.llm', 'Google AI API response received', {
+    requestId,
+    duration,
+    responseLength: text.length,
+  });
+
+  return text;
 }
 
 async function generateWithOpenAI(
@@ -236,6 +197,98 @@ async function generateWithOpenAI(
   return text;
 }
 
+async function generateWithAnthropic(
+  prompt: string,
+  model: LLMModelType,
+  temperature: number,
+  maxTokens: number,
+  images?: string[],
+  requestId?: string,
+  userApiKey?: string | null
+): Promise<string> {
+  const apiKey = userApiKey || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    logger.error('api.error', 'ANTHROPIC_API_KEY not configured', { requestId });
+    throw new Error("ANTHROPIC_API_KEY not configured. Add it to .env.local or configure in Settings.");
+  }
+
+  const modelId = ANTHROPIC_MODEL_MAP[model];
+
+  logger.info('api.llm', 'Calling Anthropic API', {
+    requestId,
+    model: modelId,
+    temperature,
+    maxTokens,
+    imageCount: images?.length || 0,
+    promptLength: prompt.length,
+  });
+
+  // Build content blocks
+  const content: Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }> = [];
+
+  if (images && images.length > 0) {
+    for (const img of images) {
+      const matches = img.match(/^data:(.+?);base64,(.+)$/);
+      if (matches) {
+        content.push({
+          type: "image",
+          source: { type: "base64", media_type: matches[1], data: matches[2] },
+        });
+      } else {
+        content.push({
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: img },
+        });
+      }
+    }
+  }
+
+  content.push({ type: "text", text: prompt });
+
+  const startTime = Date.now();
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: modelId,
+      messages: [{ role: "user", content }],
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  });
+  const duration = Date.now() - startTime;
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    logger.error('api.error', 'Anthropic API request failed', {
+      requestId,
+      status: response.status,
+      error: error.error?.message,
+    });
+    throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const text = data.content?.[0]?.text;
+
+  if (!text) {
+    logger.error('api.error', 'No text in Anthropic response', { requestId });
+    throw new Error("No text in Anthropic response");
+  }
+
+  logger.info('api.llm', 'Anthropic API response received', {
+    requestId,
+    duration,
+    responseLength: text.length,
+  });
+
+  return text;
+}
+
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
@@ -243,6 +296,7 @@ export async function POST(request: NextRequest) {
     // Get user-provided API keys from headers (override env variables)
     const geminiApiKey = request.headers.get("X-Gemini-API-Key");
     const openaiApiKey = request.headers.get("X-OpenAI-API-Key");
+    const anthropicApiKey = request.headers.get("X-Anthropic-API-Key");
 
     const body: LLMGenerateRequest = await request.json();
     const {
@@ -276,10 +330,11 @@ export async function POST(request: NextRequest) {
     let text: string;
 
     if (provider === "google") {
-      // 这一步会调用我们改写后的 fetch 版本
       text = await generateWithGoogle(prompt, model, temperature, maxTokens, images, requestId, geminiApiKey);
     } else if (provider === "openai") {
       text = await generateWithOpenAI(prompt, model, temperature, maxTokens, images, requestId, openaiApiKey);
+    } else if (provider === "anthropic") {
+      text = await generateWithAnthropic(prompt, model, temperature, maxTokens, images, requestId, anthropicApiKey);
     } else {
       logger.warn('api.llm', 'Unknown provider requested', { requestId, provider });
       return NextResponse.json<LLMGenerateResponse>(

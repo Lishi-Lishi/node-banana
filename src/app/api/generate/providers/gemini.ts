@@ -1,17 +1,18 @@
 /**
  * Gemini Provider for Generate API Route
  *
- * Handles image generation using Google's Gemini API models.
+ * Handles image generation and video generation using Google's Gemini API models.
  */
 
-/**import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { GenerateResponse, ModelType } from "@/types";
+import { GenerationOutput } from "@/lib/providers/types";
 
 /**
  * Map model types to Gemini model IDs
  */
-/*export const MODEL_MAP: Record<ModelType, string> = {
+export const MODEL_MAP: Record<ModelType, string> = {
   "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
   "nano-banana-2": "gemini-3.1-flash-image-preview",
@@ -20,7 +21,7 @@ import { GenerateResponse, ModelType } from "@/types";
 /**
  * Generate image using Gemini API (legacy/default path)
  */
-/*export async function generateWithGemini(
+export async function generateWithGemini(
   requestId: string,
   apiKey: string,
   prompt: string,
@@ -189,166 +190,166 @@ import { GenerateResponse, ModelType } from "@/types";
     { status: 500 }
   );
 }
-*/
 
-import { NextResponse } from "next/server";
-import { GenerateResponse } from "@/types";
-
-// Map model types to Gemini model IDs
-const MODEL_MAP: Record<string, string> = {
-  "nano-banana": "gemini-2.5-flash-image",
-  "nano-banana-pro": "gemini-3-pro-image-preview",
-  "nano-banana-2": "gemini-3.1-flash-image-preview", // 新增的 3.1 模型
+/**
+ * Map internal Veo model IDs to Gemini API model IDs
+ */
+const VEO_MODEL_MAP: Record<string, string> = {
+  "veo-3.1/text-to-video": "veo-3.1-generate-preview",
+  "veo-3.1/image-to-video": "veo-3.1-generate-preview",
+  "veo-3.1-fast/text-to-video": "veo-3.1-fast-generate-preview",
+  "veo-3.1-fast/image-to-video": "veo-3.1-fast-generate-preview",
 };
 
 /**
- * 辅助函数：将图片 (URL 或 Base64) 转为纯 Base64 字符串
+ * Generate video using Gemini API (Veo models)
  */
-async function imageUrlToBase64(url: string): Promise<string> {
-  if (url.startsWith("data:")) {
-    return url.split("base64,")[1];
-  }
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
-    const buffer = await res.arrayBuffer();
-    return Buffer.from(buffer).toString("base64");
-  } catch (error) {
-    console.error("Image conversion failed:", error);
-    throw error;
-  }
-}
-
-/**
- * Generate image using Gemini API (通过云雾 Native Fetch)
- */
-export async function generateWithGemini(
+export async function generateWithGeminiVideo(
   requestId: string,
   apiKey: string,
+  modelId: string,
   prompt: string,
   images: string[],
-  model: string,
-  aspectRatio?: string,
-  resolution?: string,
-  useGoogleSearch?: boolean,
-  useImageSearch?: boolean // 新增参数
-): Promise<NextResponse<GenerateResponse>> {
-  
-  // 1. 获取 Base URL (适配云雾)
-  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
-  baseUrl = baseUrl.replace(/\/+$/, ""); 
+  parameters: Record<string, unknown> = {},
+): Promise<GenerationOutput> {
+  const apiModelId = VEO_MODEL_MAP[modelId];
+  if (!apiModelId) {
+    return { success: false, error: `Unknown Veo model: ${modelId}` };
+  }
 
-  const targetId = MODEL_MAP[model] || model || "gemini-2.5-flash-image";
-  const url = `${baseUrl}/v1beta/models/${targetId}:generateContent?key=${apiKey}`;
+  console.log(`[API:${requestId}] Gemini video generation - Model: ${apiModelId}, Prompt: ${prompt?.length || 0} chars, Images: ${images?.length || 0}`);
 
-  console.log(`[API:${requestId}] 🚀 POST Yunwu-Gemini Native: ${url}`);
-  console.log(`[API:${requestId}] Config: Model=${targetId}, Ratio=${aspectRatio || "Default"}, Res=${resolution || "Default"}`);
+  const ai = new GoogleGenAI({ apiKey });
 
+  // Build config from parameters
+  const config: Record<string, unknown> = {
+    numberOfVideos: 1,
+  };
+
+  if (parameters.aspectRatio) {
+    config.aspectRatio = parameters.aspectRatio;
+  }
+  if (parameters.durationSeconds) {
+    config.durationSeconds = Number(parameters.durationSeconds);
+  }
+  if (parameters.resolution) {
+    config.resolution = parameters.resolution;
+  }
+  if (parameters.negativePrompt) {
+    config.negativePrompt = parameters.negativePrompt;
+  }
+  if (parameters.seed !== undefined && parameters.seed !== null && parameters.seed !== "") {
+    config.seed = Number(parameters.seed);
+  }
+
+  // Build request args
+  const requestArgs: Record<string, unknown> = {
+    model: apiModelId,
+    prompt,
+    config,
+  };
+
+  // Validate image-to-video models have an image
+  if (modelId.includes("image-to-video") && (!images || images.length === 0)) {
+    console.error(`[API:${requestId}] Image required for image-to-video model: ${modelId}`);
+    return { success: false, error: "Image required for image-to-video model" };
+  }
+
+  // Add image for image-to-video models
+  if (images && images.length > 0 && modelId.includes("image-to-video")) {
+    const imageInput = images[0];
+    if (imageInput.includes("base64,")) {
+      const [header, data] = imageInput.split("base64,");
+      const mimeMatch = header.match(/data:([^;]+)/);
+      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+      requestArgs.image = {
+        imageBytes: data,
+        mimeType,
+      };
+    } else {
+      requestArgs.image = {
+        imageBytes: imageInput,
+        mimeType: "image/png",
+      };
+    }
+  }
+
+  console.log(`[API:${requestId}] Veo config: ${JSON.stringify(config)}`);
+
+  // Start video generation (async operation)
+  const startTime = Date.now();
+
+  let operation;
   try {
-    const parts: any[] = [];
+    operation = await ai.models.generateVideos(requestArgs as unknown as Parameters<typeof ai.models.generateVideos>[0]);
 
-    // 2. 处理图片，加上 "Image X:" 标签
-    if (images && images.length > 0) {
-      console.log(`[API:${requestId}] 🔄 Converting ${images.length} images...`);
-      for (let i = 0; i < images.length; i++) {
-        const imgUrl = images[i];
-        try {
-          const base64Data = await imageUrlToBase64(imgUrl);
-          parts.push({ text: `Image ${i + 1}:` });
-          parts.push({
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: base64Data
-            }
-          });
-        } catch (e) {
-          console.error(`[API:${requestId}] Failed to process image ${i + 1}`, e);
-        }
+    // Poll for completion (10s intervals, 5min timeout)
+    const POLL_INTERVAL = 10_000;
+    const TIMEOUT = 5 * 60 * 1000;
+
+    while (!operation.done) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > TIMEOUT) {
+        console.error(`[API:${requestId}] Veo generation timed out after ${(elapsed / 1000).toFixed(0)}s`);
+        return { success: false, error: "Video generation timed out after 5 minutes" };
       }
+
+      console.log(`[API:${requestId}] Veo polling... (${(elapsed / 1000).toFixed(0)}s elapsed)`);
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+      operation = await ai.operations.getVideosOperation({ operation });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[API:${requestId}] Veo generation failed: ${msg}`);
+    return { success: false, error: `Video generation failed: ${msg}` };
+  }
+
+  const duration = Date.now() - startTime;
+  console.log(`[API:${requestId}] Veo generation completed in ${(duration / 1000).toFixed(1)}s`);
+
+  // Extract generated video
+  const generatedVideos = operation.response?.generatedVideos;
+  if (!generatedVideos || generatedVideos.length === 0) {
+    console.error(`[API:${requestId}] No generated videos in Veo response`);
+    return { success: false, error: "No video generated. The content may have been filtered by safety policies." };
+  }
+
+  const videoUri = generatedVideos[0]?.video?.uri;
+  if (!videoUri) {
+    console.error(`[API:${requestId}] No video URI in Veo response`);
+    return { success: false, error: "No video URI in response" };
+  }
+
+  // Fetch the video (append API key for authentication)
+  const videoUrl = `${videoUri}&key=${apiKey}`;
+  console.log(`[API:${requestId}] Fetching video from URI...`);
+
+  const controller = new AbortController();
+  const fetchTimeout = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const videoResponse = await fetch(videoUrl, { signal: controller.signal });
+    if (!videoResponse.ok) {
+      console.error(`[API:${requestId}] Failed to fetch video: ${videoResponse.status}`);
+      return { success: false, error: `Failed to download generated video: ${videoResponse.status}` };
     }
 
-    // 3. 处理 Prompt
-    if (prompt) {
-      parts.push({ text: `\nUser Prompt: ${prompt}` });
-    }
+    const videoBuffer = await videoResponse.arrayBuffer();
+    const videoSizeMB = (videoBuffer.byteLength / (1024 * 1024)).toFixed(2);
+    console.log(`[API:${requestId}] Video downloaded: ${videoSizeMB}MB`);
 
-    // 4. 构造 Body
-    const body: any = {
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-        imageConfig: {}
-      }
+    const base64Video = Buffer.from(videoBuffer).toString("base64");
+    const dataUrl = `data:video/mp4;base64,${base64Video}`;
+
+    console.log(`[API:${requestId}] SUCCESS - Returning ${videoSizeMB}MB video`);
+
+    return {
+      success: true,
+      outputs: [{ type: "video", data: dataUrl }],
     };
-
-    if (aspectRatio) {
-      body.generationConfig.imageConfig.aspectRatio = aspectRatio;
-    }
-    if (resolution && (model === "nano-banana-pro" || model === "nano-banana-2")) {
-      body.generationConfig.imageConfig.imageSize = resolution;
-    }
-
-// --- 新增：插入 Google Search / Image Search 逻辑 ---
-    const tools = [];
-    if (model === "nano-banana-2" && (useGoogleSearch || useImageSearch)) {
-      const searchTypes: Record<string, any> = {};
-      if (useGoogleSearch) searchTypes.webSearch = {};
-      if (useImageSearch) searchTypes.imageSearch = {};
-      tools.push({ googleSearch: { searchTypes } });
-    } else if (model === "nano-banana-pro" && useGoogleSearch) {
-      tools.push({ googleSearch: {} });
-    }
-
-    if (tools.length > 0) {
-      body.tools = tools;
-    }
-    // ---------------------------------------------------
-
-    // 5. 发送 Fetch 请求
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error(`[API:${requestId}] ❌ Gemini Native Error:`, errText);
-      throw new Error(`Cloud API Failed (${res.status}): ${errText}`);
-    }
-
-    const data = await res.json();
-    const candidate = data.candidates?.[0];
-    const part = candidate?.content?.parts?.[0];
-
-    // 6. 解析图片返回结果
-    if (part?.inlineData?.data) {
-      const base64Data = part.inlineData.data;
-      const mimeType = part.inlineData.mimeType || "image/png";
-      const dataUrl = `data:${mimeType};base64,${base64Data}`;
-      
-      console.log(`[API:${requestId}] ✅ Success! Image generated.`);
-      
-      // 返回与原版兼容的格式
-      return NextResponse.json({ 
-        success: true, 
-        image: dataUrl, 
-        contentType: "image" 
-      });
-    }
-
-    if (part?.text) {
-      console.warn(`[API:${requestId}] ⚠️ Gemini returned text:`, part.text);
-      throw new Error(`Model returned text instead of image: "${part.text}"`);
-    }
-
-    throw new Error("Unknown Gemini native response format");
-
-  } catch (error: any) {
-    console.error(`[API:${requestId}] 💥 Handler Error:`, error);
-    return NextResponse.json(
-      { success: false, error: error.message || "Unknown error" },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error(`[API:${requestId}] Failed to download video: ${error}`);
+    return { success: false, error: "Failed to download generated video" };
+  } finally {
+    clearTimeout(fetchTimeout);
   }
 }

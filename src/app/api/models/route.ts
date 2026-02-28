@@ -386,6 +386,46 @@ const GEMINI_IMAGE_MODELS: ProviderModel[] = [
   },
 ];
 
+// Gemini video models (native Veo via Gemini API)
+const GEMINI_VIDEO_MODELS: ProviderModel[] = [
+  {
+    id: "veo-3.1/text-to-video",
+    name: "Veo 3.1",
+    description: "Highest quality video generation with Veo 3.1. Supports 720p/1080p/4k, 4-8 second clips, and native audio via Gemini API.",
+    provider: "gemini",
+    capabilities: ["text-to-video"],
+    coverImage: undefined,
+    pricing: { type: "per-second", amount: 0.40, currency: "USD" },
+  },
+  {
+    id: "veo-3.1/image-to-video",
+    name: "Veo 3.1 I2V",
+    description: "Image-to-video generation with Veo 3.1. Supports 720p/1080p/4k, 4-8 second clips, and native audio via Gemini API.",
+    provider: "gemini",
+    capabilities: ["image-to-video"],
+    coverImage: undefined,
+    pricing: { type: "per-second", amount: 0.40, currency: "USD" },
+  },
+  {
+    id: "veo-3.1-fast/text-to-video",
+    name: "Veo 3.1 Fast",
+    description: "Fast, cost-effective video generation with Veo 3.1 Fast. Supports 720p/1080p/4k, 4-8 second clips via Gemini API.",
+    provider: "gemini",
+    capabilities: ["text-to-video"],
+    coverImage: undefined,
+    pricing: { type: "per-second", amount: 0.15, currency: "USD" },
+  },
+  {
+    id: "veo-3.1-fast/image-to-video",
+    name: "Veo 3.1 Fast I2V",
+    description: "Fast image-to-video generation with Veo 3.1 Fast. Supports 720p/1080p/4k, 4-8 second clips via Gemini API.",
+    provider: "gemini",
+    capabilities: ["image-to-video"],
+    coverImage: undefined,
+    pricing: { type: "per-second", amount: 0.15, currency: "USD" },
+  },
+];
+
 // WaveSpeed models are now fetched dynamically from https://api.wavespeed.ai/api/v3/models
 
 // ============ Replicate Types ============
@@ -980,7 +1020,7 @@ export async function GET(
   // Add Gemini models first if included (they appear at the top)
   if (includeGemini) {
     // Filter by search query if provided
-    let geminiModels = GEMINI_IMAGE_MODELS;
+    let geminiModels = [...GEMINI_IMAGE_MODELS, ...GEMINI_VIDEO_MODELS];
     if (searchQuery) {
       geminiModels = filterModelsBySearch(geminiModels, searchQuery);
     }

@@ -40,6 +40,9 @@ import {
   EaseCurveNode,
   VideoTrimNode,
   VideoFrameGrabNode,
+  RouterNode,
+  SwitchNode,
+  ConditionalSwitchNode,
 } from "./nodes";
 
 // Lazy-load GLBViewerNode to avoid bundling three.js for users who don't use 3D nodes
@@ -50,7 +53,7 @@ import { MultiSelectToolbar } from "./MultiSelectToolbar";
 import { EdgeToolbar } from "./EdgeToolbar";
 import { GlobalImageHistory } from "./GlobalImageHistory";
 import { GroupBackgroundsPortal, GroupControlsOverlay } from "./GroupsOverlay";
-import { NodeType, NanoBananaNodeData } from "@/types";
+import { NodeType, NanoBananaNodeData, HandleType } from "@/types";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
@@ -80,6 +83,9 @@ const nodeTypes: NodeTypes = {
   easeCurve: EaseCurveNode,
   videoTrim: VideoTrimNode,
   videoFrameGrab: VideoFrameGrabNode,
+  router: RouterNode,
+  switch: SwitchNode,
+  conditionalSwitch: ConditionalSwitchNode,
   glbViewer: GLBViewerNode,
 };
 
@@ -96,6 +102,8 @@ const edgeTypes: EdgeTypes = {
 // For dynamic handles, we use naming convention: image inputs contain "image", text inputs are "prompt" or "negative_prompt"
 const getHandleType = (handleId: string | null | undefined): "image" | "text" | "video" | "audio" | "3d" | "easeCurve" | null => {
   if (!handleId) return null;
+  // Generic Router handles — return null to allow any type connection
+  if (handleId === "generic-input" || handleId === "generic-output") return null;
   // EaseCurve handles (must check before other types)
   if (handleId === "easeCurve") return "easeCurve";
   // 3D handles
@@ -152,6 +160,15 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["video"], outputs: ["video"] };
     case "videoFrameGrab":
       return { inputs: ["video"], outputs: ["image"] };
+    case "router":
+      return { inputs: ["image", "text", "video", "audio", "3d", "easeCurve", "generic-input"], outputs: ["image", "text", "video", "audio", "3d", "easeCurve", "generic-output"] };
+    case "switch":
+      // Switch has one input handle (generic-input when disconnected, typed when connected)
+      // Output handles are dynamic based on switches array, all matching inputType
+      return { inputs: ["generic-input"], outputs: [] }; // Outputs handled dynamically in SwitchNode
+    case "conditionalSwitch":
+      // Conditional Switch has one text input and dynamic rule outputs + default
+      return { inputs: ["text"], outputs: [] }; // Outputs handled dynamically in ConditionalSwitchNode
     case "glbViewer":
       return { inputs: ["3d"], outputs: ["image"] };
     default:
@@ -239,7 +256,7 @@ const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: num
 };
 
 export function WorkflowCanvas() {
-  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget, captureSnapshot, applyEditOperations, setWorkflowMetadata, canvasNavigationSettings, setShortcutsDialogOpen } =
+  const { nodes, edges, groups, onNodesChange, onEdgesChange, onConnect, addNode, updateNodeData, loadWorkflow, getNodeById, addToGlobalHistory, setNodeGroupId, executeWorkflow, isModalOpen, showQuickstart, setShowQuickstart, navigationTarget, setNavigationTarget, captureSnapshot, applyEditOperations, setWorkflowMetadata, canvasNavigationSettings, setShortcutsDialogOpen, dimmedNodeIds } =
     useWorkflowStore();
   const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
@@ -274,10 +291,24 @@ export function WorkflowCanvas() {
     }
   }, [navigationTarget, nodes, setCenter, setNavigationTarget]);
 
-  // Just pass regular nodes to React Flow - groups are rendered separately
+  // Apply dimming className to nodes downstream of disabled Switch outputs
   const allNodes = useMemo(() => {
-    return nodes;
-  }, [nodes]);
+    return nodes.map((node) => {
+      // Never dim Switch or ConditionalSwitch nodes themselves
+      if (node.type === "switch" || node.type === "conditionalSwitch") return node;
+
+      const isDimmed = dimmedNodeIds.has(node.id);
+      const dimClass = isDimmed ? "switch-dimmed" : "";
+
+      // Preserve existing className if any, add/remove dimmed class
+      const baseClass = (node.className || "").replace(/\bswitch-dimmed\b/g, "").trim();
+      const newClass = dimClass ? `${baseClass} ${dimClass}`.trim() : baseClass;
+
+      // Only create new node object if className changed
+      if (node.className === newClass) return node;
+      return { ...node, className: newClass };
+    });
+  }, [nodes, dimmedNodeIds]);
 
 
   // Check if a node was dropped into a group and add it to that group
@@ -324,13 +355,38 @@ export function WorkflowCanvas() {
       const sourceType = getHandleType(connection.sourceHandle);
       const targetType = getHandleType(connection.targetHandle);
 
+      // Switch input: accept any type (generic-input handle)
+      const targetNode = nodes.find((n) => n.id === connection.target);
+      const sourceNode = nodes.find((n) => n.id === connection.source);
+      if (targetNode?.type === "switch" && connection.targetHandle === "generic-input") return true;
+
+      // Switch output: the type is determined by inputType stored in node data
+      if (sourceNode?.type === "switch") {
+        const switchData = sourceNode.data as { inputType?: string | null };
+        if (switchData.inputType && targetType) {
+          return switchData.inputType === targetType;
+        }
+        // If inputType not set yet, allow connection (will be resolved)
+        return true;
+      }
+
+      // Conditional Switch: text input only, text outputs only
+      if (targetNode?.type === "conditionalSwitch") {
+        return sourceType === "text";
+      }
+      if (sourceNode?.type === "conditionalSwitch") {
+        return targetType === "text";
+      }
+
       // If we can't determine types, allow the connection
       if (!sourceType || !targetType) return true;
 
-      // EaseCurve connections: only between easeCurve nodes
+      // EaseCurve connections: only between easeCurve nodes (or router)
       if (sourceType === "easeCurve" || targetType === "easeCurve") {
-        if (sourceType !== "easeCurve" || targetType !== "easeCurve") return false;
         const targetNode = nodes.find((n) => n.id === connection.target);
+        const sourceNode = nodes.find((n) => n.id === connection.source);
+        if (targetNode?.type === "router" || sourceNode?.type === "router") return true;
+        if (sourceType !== "easeCurve" || targetType !== "easeCurve") return false;
         return targetNode?.type === "easeCurve";
       }
 
@@ -344,7 +400,7 @@ export function WorkflowCanvas() {
         if (!targetNode) return false;
 
         const targetNodeType = targetNode.type;
-        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "output") {
+        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "output" || targetNodeType === "router") {
           // For output node, we allow video even though its handle is typed as "image"
           // because output node can display both images and videos
           return true;
@@ -353,16 +409,20 @@ export function WorkflowCanvas() {
         return false;
       }
 
-      // 3D connections: 3d handles can only connect to matching 3d handles
+      // 3D connections: 3d handles can only connect to matching 3d handles (or router)
       if (sourceType === "3d" || targetType === "3d") {
+        // Allow 3d connections to router nodes
+        const sourceNode = nodes.find((n) => n.id === connection.source);
+        const targetNode = nodes.find((n) => n.id === connection.target);
+        if (sourceNode?.type === "router" || targetNode?.type === "router") return true;
         return sourceType === "3d" && targetType === "3d";
       }
 
-      // Audio connections: audio handles connect to audio handles, plus output node
+      // Audio connections: audio handles connect to audio handles, plus output node (or router)
       if (sourceType === "audio" || targetType === "audio") {
         if (sourceType === "audio") {
           const targetNode = nodes.find((n) => n.id === connection.target);
-          if (targetNode?.type === "output") return true;
+          if (targetNode?.type === "output" || targetNode?.type === "router") return true;
         }
         return sourceType === "audio" && targetType === "audio";
       }
@@ -392,6 +452,51 @@ export function WorkflowCanvas() {
         return conn;
       };
 
+      // For Router nodes, resolve generic handles to typed handles
+      const resolveRouterHandle = (conn: Connection): Connection => {
+        const targetNode = nodes.find((n) => n.id === conn.target);
+        if (targetNode?.type !== "router") return conn;
+
+        // If targeting a generic handle, transform to typed handle
+        if (conn.targetHandle === "generic-input") {
+          const sourceType = getHandleType(conn.sourceHandle);
+          if (sourceType) {
+            return { ...conn, targetHandle: sourceType };
+          }
+        }
+        return conn;
+      };
+
+      // For Router source nodes, resolve generic output handles to typed handles
+      const resolveRouterSourceHandle = (conn: Connection): Connection => {
+        const sourceNode = nodes.find((n) => n.id === conn.source);
+        if (sourceNode?.type !== "router") return conn;
+        if (conn.sourceHandle === "generic-output") {
+          const targetType = getHandleType(conn.targetHandle);
+          if (targetType) {
+            return { ...conn, sourceHandle: targetType };
+          }
+        }
+        return conn;
+      };
+
+      // For Switch nodes, resolve generic-input to the source's handle type and update inputType
+      const resolveSwitchHandle = (conn: Connection): Connection => {
+        const targetNode = nodes.find((n) => n.id === conn.target);
+        if (targetNode?.type !== "switch") return conn;
+
+        // If targeting the generic-input handle, resolve to the source handle type
+        if (conn.targetHandle === "generic-input") {
+          const sourceType = getHandleType(conn.sourceHandle);
+          if (sourceType) {
+            // Update the Switch node's inputType in data so output handles render
+            updateNodeData(conn.target, { inputType: sourceType as HandleType });
+            return { ...conn, targetHandle: sourceType };
+          }
+        }
+        return conn;
+      };
+
       // Get all selected nodes
       const selectedNodes = nodes.filter((node) => node.selected);
       const sourceNode = nodes.find((node) => node.id === connection.source);
@@ -405,6 +510,9 @@ export function WorkflowCanvas() {
           // Skip if this is already the connection source
           if (node.id === connection.source) {
             let resolved = resolveImageCompareHandle(connection, batchUsed);
+            resolved = resolveRouterHandle(resolved);
+            resolved = resolveRouterSourceHandle(resolved);
+            resolved = resolveSwitchHandle(resolved);
             // Resolve videoStitch handles for batch connections
             const tgtNode = nodes.find((n) => n.id === resolved.target);
             if (tgtNode?.type === "videoStitch" && resolved.targetHandle?.startsWith("video-")) {
@@ -456,7 +564,10 @@ export function WorkflowCanvas() {
             }
           }
 
-          const resolved = resolveImageCompareHandle(multiConnection, batchUsed);
+          let resolved = resolveImageCompareHandle(multiConnection, batchUsed);
+          resolved = resolveRouterHandle(resolved);
+          resolved = resolveRouterSourceHandle(resolved);
+          resolved = resolveSwitchHandle(resolved);
           if (resolved.targetHandle) batchUsed.add(resolved.targetHandle);
           if (isValidConnection(resolved)) {
             onConnect(resolved);
@@ -464,7 +575,11 @@ export function WorkflowCanvas() {
         });
       } else {
         // Single connection
-        onConnect(resolveImageCompareHandle(connection));
+        let resolved = resolveImageCompareHandle(connection);
+        resolved = resolveRouterHandle(resolved);
+        resolved = resolveRouterSourceHandle(resolved);
+        resolved = resolveSwitchHandle(resolved);
+        onConnect(resolved);
       }
     },
     [onConnect, nodes, edges]
@@ -480,8 +595,21 @@ export function WorkflowCanvas() {
 
       const { clientX, clientY } = event as MouseEvent;
       const fromHandleId = connectionState.fromHandle?.id || null;
-      const fromHandleType = getHandleType(fromHandleId); // Use getHandleType for dynamic handles
+      let fromHandleType = getHandleType(fromHandleId); // Use getHandleType for dynamic handles
       const isFromSource = connectionState.fromHandle?.type === "source";
+
+      // Switch output handles have dynamic IDs — resolve type from node's inputType
+      if (!fromHandleType && connectionState.fromNode.type === "switch") {
+        const switchData = connectionState.fromNode.data as { inputType?: string | null };
+        if (switchData.inputType) {
+          fromHandleType = switchData.inputType as "image" | "text" | "video" | "audio" | "3d" | "easeCurve";
+        }
+      }
+
+      // ConditionalSwitch output handles have dynamic IDs (rule-xxx, default) — always text type
+      if (!fromHandleType && connectionState.fromNode.type === "conditionalSwitch") {
+        fromHandleType = "text";
+      }
 
       // Helper to find a compatible handle on a node by type
       const findCompatibleHandle = (
@@ -528,6 +656,43 @@ export function WorkflowCanvas() {
             if (!isOccupied) return candidateHandle;
           }
           return null;
+        }
+
+        // Router accepts any type — use typed handle if exists, otherwise generic
+        if (node.type === "router" && needInput) {
+          // Router accepts any type — use typed handle if that type is already active
+          return handleType;
+        }
+        if (node.type === "router" && !needInput) {
+          return handleType;
+        }
+
+        // Switch accepts any type on input, outputs match inputType
+        if (node.type === "switch" && needInput) {
+          return "generic-input";
+        }
+        if (node.type === "switch" && !needInput) {
+          const switchData = node.data as { switches?: Array<{ id: string; enabled: boolean }> };
+          // Return first enabled switch output handle ID
+          if (switchData.switches && switchData.switches.length > 0) {
+            const firstEnabled = switchData.switches.find(s => s.enabled);
+            if (firstEnabled) return firstEnabled.id;
+          }
+          return null;
+        }
+
+        // Conditional Switch: text input, dynamic rule outputs
+        if (node.type === "conditionalSwitch" && handleType === "text") {
+          if (needInput) {
+            return "text";
+          } else {
+            // Return first rule ID from node data
+            const condData = node.data as { rules?: Array<{ id: string }> };
+            if (condData.rules && condData.rules.length > 0) {
+              return condData.rules[0].id;
+            }
+            return "default";
+          }
         }
 
         // Fall back to static handles
@@ -820,7 +985,34 @@ export function WorkflowCanvas() {
 
       // Map handle type to the correct handle ID based on node type
       // Note: New nodes start with default handles (image, text) before a model is selected
-      if (handleType === "image") {
+
+      // Router accepts and outputs all types — use the connection's handle type
+      if (nodeType === "router") {
+        if (handleType) {
+          targetHandleId = handleType;
+          sourceHandleIdForNewNode = handleType;
+        }
+      } else if (nodeType === "switch") {
+        // Switch input: use the actual type so the edge stores the correct handle type
+        // (onConnect bypasses resolveSwitchHandle, so we must resolve here)
+        targetHandleId = handleType || "generic-input";
+        if (handleType) {
+          updateNodeData(newNodeId, { inputType: handleType as HandleType });
+        }
+        // Switch outputs use dynamic handle IDs (switch entry IDs)
+        sourceHandleIdForNewNode = null;
+      } else if (nodeType === "conditionalSwitch") {
+        // Conditional Switch: text input and dynamic rule outputs
+        targetHandleId = "text";
+        // Source handle is the first rule ID or "default"
+        const nodeDataCheck = nodes.find(n => n.id === newNodeId);
+        if (nodeDataCheck && nodeDataCheck.data) {
+          const condData = nodeDataCheck.data as { rules?: Array<{ id: string }> };
+          sourceHandleIdForNewNode = condData.rules && condData.rules.length > 0 ? condData.rules[0].id : "default";
+        } else {
+          sourceHandleIdForNewNode = "default";
+        }
+      } else if (handleType === "image") {
         if (nodeType === "annotation" || nodeType === "output" || nodeType === "splitGrid" || nodeType === "outputGallery" || nodeType === "imageCompare") {
           targetHandleId = "image";
           // annotation also has an image output
@@ -1106,7 +1298,7 @@ export function WorkflowCanvas() {
             nodeType = "prompt";
             break;
           case "r":
-            nodeType = "array";
+            nodeType = "router";
             break;
           case "i":
             nodeType = "imageInput";
@@ -1152,6 +1344,9 @@ export function WorkflowCanvas() {
             easeCurve: { width: 340, height: 480 },
             videoTrim: { width: 360, height: 360 },
             videoFrameGrab: { width: 320, height: 320 },
+            router: { width: 200, height: 80 },
+            switch: { width: 220, height: 120 },
+            conditionalSwitch: { width: 260, height: 180 },
             glbViewer: { width: 360, height: 380 },
           };
           const dims = defaultDimensions[nodeType];
@@ -1744,6 +1939,12 @@ export function WorkflowCanvas() {
                 return "#60a5fa"; // blue-400 (trim/cut)
               case "videoFrameGrab":
                 return "#38bdf8"; // sky-400 (image from video)
+              case "router":
+                return "#6b7280"; // neutral-500 (gray/slate utility theme)
+              case "switch":
+                return "#8b5cf6"; // violet-500 (distinct from Router)
+              case "conditionalSwitch":
+                return "#06b6d4"; // cyan-500 (distinct from Router gray and Switch violet)
               case "glbViewer":
                 return "#0ea5e9"; // sky-500 (3D viewport)
               default:

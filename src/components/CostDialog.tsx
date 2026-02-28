@@ -20,6 +20,7 @@ function ProviderIcon({ provider }: { provider: ProviderType }) {
     fal: { bg: "bg-purple-500/20", text: "text-purple-300" },
     replicate: { bg: "bg-blue-500/20", text: "text-blue-300" },
     openai: { bg: "bg-teal-500/20", text: "text-teal-300" },
+    anthropic: { bg: "bg-amber-500/20", text: "text-amber-300" },
     kie: { bg: "bg-orange-500/20", text: "text-orange-300" },
     wavespeed: { bg: "bg-purple-500/20", text: "text-purple-300" },
   };
@@ -29,6 +30,7 @@ function ProviderIcon({ provider }: { provider: ProviderType }) {
     fal: "f",
     replicate: "R",
     openai: "O",
+    anthropic: "A",
     kie: "K",
     wavespeed: "W",
   };
@@ -51,6 +53,7 @@ function getProviderDisplayName(provider: ProviderType): string {
     fal: "fal.ai",
     replicate: "Replicate",
     openai: "OpenAI",
+    anthropic: "Anthropic",
     kie: "Kie.ai",
     wavespeed: "WaveSpeed",
   };

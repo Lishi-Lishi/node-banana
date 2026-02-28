@@ -49,6 +49,16 @@ body {
   box-shadow: none !important;
 }
 
+/* Switch dimming - nodes downstream of disabled Switch outputs */
+.react-flow__node.switch-dimmed {
+  opacity: 0.4;
+  transition: opacity 250ms ease-in-out;
+}
+
+.react-flow__node:not(.switch-dimmed) {
+  transition: opacity 250ms ease-in-out;
+}
+
 /* Base handle styles */
 .react-flow__handle {
   width: 10px;

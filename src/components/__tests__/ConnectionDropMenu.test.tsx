@@ -218,7 +218,7 @@ describe("ConnectionDropMenu", () => {
       fireEvent.keyDown(document, { key: "ArrowUp" });
 
       // Last item should now be highlighted
-      const lastButton = screen.getByText("Image Compare").closest("button");
+      const lastButton = screen.getByText("Switch").closest("button");
       expect(lastButton).toHaveClass("bg-neutral-700");
     });
 
@@ -245,15 +245,11 @@ describe("ConnectionDropMenu", () => {
     it("should wrap around when navigating past last item", () => {
       render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
 
-      // Text target labels: Prompt, Prompt Constructor, Array, Generate Image, Generate Video, Generate Audio, LLM Generate (7 items)
-      // Navigate down 7 times to wrap to first
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
-      fireEvent.keyDown(document, { key: "ArrowDown" });
+      // Text target labels: Prompt, Prompt Constructor, Array, Generate Image, Generate Video, Generate Audio, LLM Generate, Router, Switch, Conditional Switch (10 items)
+      // Navigate down 10 times to wrap to first
+      for (let i = 0; i < 10; i++) {
+        fireEvent.keyDown(document, { key: "ArrowDown" });
+      }
 
       // Should be back on first item (Prompt)
       const firstButton = screen.getByText("Prompt").closest("button");

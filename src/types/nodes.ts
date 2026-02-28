@@ -41,6 +41,9 @@ export type NodeType =
   | "easeCurve"
   | "videoTrim"
   | "videoFrameGrab"
+  | "router"
+  | "switch"
+  | "conditionalSwitch"
   | "generate3d"
   | "glbViewer";
 
@@ -351,6 +354,50 @@ export interface VideoFrameGrabNodeData extends BaseNodeData {
 }
 
 /**
+ * Router node - pure passthrough routing node with dynamic multi-type handles
+ */
+export interface RouterNodeData extends BaseNodeData {
+  // No internal state - all routing is derived from edge connections
+}
+
+/**
+ * Switch node - toggle-controlled routing with named outputs
+ */
+export interface SwitchNodeData extends BaseNodeData {
+  inputType: HandleType | null;  // Derived from connected input edge, null when disconnected
+  switches: Array<{
+    id: string;        // Unique identifier for handle mapping
+    name: string;      // User-editable label
+    enabled: boolean;  // Toggle state
+  }>;
+}
+
+/**
+ * Match mode for conditional switch rules
+ */
+export type MatchMode = "exact" | "contains" | "starts-with" | "ends-with";
+
+/**
+ * Conditional switch rule for text-based routing
+ */
+export interface ConditionalSwitchRule {
+  id: string;           // Unique handle ID, prefixed with "rule-" to avoid collision with reserved "default" keyword
+  value: string;        // Comma-separated match values
+  mode: MatchMode;      // Match strategy
+  label: string;        // User-editable display name
+  isMatched: boolean;   // Computed match state
+}
+
+/**
+ * Conditional Switch node - text-based routing with multi-mode matching
+ */
+export interface ConditionalSwitchNodeData extends BaseNodeData {
+  incomingText: string | null;  // Upstream text for evaluation and display
+  rules: ConditionalSwitchRule[]; // User-defined rules
+  evaluationPaused?: boolean;   // When true, skips rule evaluation and downstream dimming
+}
+
+/**
  * Split Grid node - splits image into grid cells for parallel processing
  */
 export interface SplitGridNodeData extends BaseNodeData {
@@ -409,6 +456,9 @@ export type WorkflowNodeData =
   | EaseCurveNodeData
   | VideoTrimNodeData
   | VideoFrameGrabNodeData
+  | RouterNodeData
+  | SwitchNodeData
+  | ConditionalSwitchNodeData
   | GLBViewerNodeData;
 
 /**

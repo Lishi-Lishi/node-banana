@@ -13,6 +13,7 @@ import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 const LLM_PROVIDERS: { value: LLMProvider; label: string }[] = [
   { value: "google", label: "Google" },
   { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
 ];
 
 const LLM_MODELS: Record<LLMProvider, { value: LLMModelType; label: string }[]> = {
@@ -20,10 +21,16 @@ const LLM_MODELS: Record<LLMProvider, { value: LLMModelType; label: string }[]> 
     { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { value: "gemini-3-pro-preview", label: "Gemini 3.0 Pro" },
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
   ],
   openai: [
     { value: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
     { value: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+  ],
+  anthropic: [
+    { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+    { value: "claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
   ],
 };
 
@@ -149,6 +156,7 @@ export function ProjectSetupModal({
   const [showApiKey, setShowApiKey] = useState<Record<ProviderType, boolean>>({
     gemini: false,
     openai: false,
+    anthropic: false,
     replicate: false,
     fal: false,
     kie: false,
@@ -157,6 +165,7 @@ export function ProjectSetupModal({
   const [overrideActive, setOverrideActive] = useState<Record<ProviderType, boolean>>({
     gemini: false,
     openai: false,
+    anthropic: false,
     replicate: false,
     fal: false,
     kie: false,
@@ -192,11 +201,12 @@ export function ProjectSetupModal({
 
       // Sync local providers state
       setLocalProviders(providerSettings);
-      setShowApiKey({ gemini: false, openai: false, replicate: false, fal: false, kie: false, wavespeed: false });
+      setShowApiKey({ gemini: false, openai: false, anthropic: false, replicate: false, fal: false, kie: false, wavespeed: false });
       // Initialize override as active if user already has a key set
       setOverrideActive({
         gemini: !!providerSettings.providers.gemini?.apiKey,
         openai: !!providerSettings.providers.openai?.apiKey,
+        anthropic: !!providerSettings.providers.anthropic?.apiKey,
         replicate: !!providerSettings.providers.replicate?.apiKey,
         fal: !!providerSettings.providers.fal?.apiKey,
         kie: !!providerSettings.providers.kie?.apiKey,
@@ -298,7 +308,7 @@ export function ProjectSetupModal({
 
   const handleSaveProviders = () => {
     // Save each provider's settings
-    const providerIds: ProviderType[] = ["gemini", "openai", "replicate", "fal", "kie", "wavespeed"];
+    const providerIds: ProviderType[] = ["gemini", "openai", "anthropic", "replicate", "fal", "kie", "wavespeed"];
     for (const providerId of providerIds) {
       const local = localProviders.providers[providerId];
       const current = providerSettings.providers[providerId];
@@ -561,6 +571,54 @@ export function ProjectSetupModal({
                         onClick={() => {
                           setOverrideActive((prev) => ({ ...prev, openai: false }));
                           updateLocalProvider("openai", { apiKey: null });
+                        }}
+                        className="text-xs text-neutral-500 hover:text-neutral-300"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Anthropic Provider */}
+            <div className="p-3 bg-neutral-900 rounded-lg border border-neutral-700">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-neutral-100">Anthropic</span>
+                {envStatus?.anthropic && !overrideActive.anthropic ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-green-400">Configured via .env</span>
+                    <button
+                      type="button"
+                      onClick={() => setOverrideActive((prev) => ({ ...prev, anthropic: true }))}
+                      className="px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+                    >
+                      Override
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showApiKey.anthropic ? "text" : "password"}
+                      value={localProviders.providers.anthropic?.apiKey || ""}
+                      onChange={(e) => updateLocalProvider("anthropic", { apiKey: e.target.value || null })}
+                      placeholder="sk-ant-..."
+                      className="w-48 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded text-neutral-100 text-xs focus:outline-none focus:border-neutral-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((prev) => ({ ...prev, anthropic: !prev.anthropic }))}
+                      className="text-xs text-neutral-400 hover:text-neutral-200"
+                    >
+                      {showApiKey.anthropic ? "Hide" : "Show"}
+                    </button>
+                    {envStatus?.anthropic && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOverrideActive((prev) => ({ ...prev, anthropic: false }));
+                          updateLocalProvider("anthropic", { apiKey: null });
                         }}
                         className="text-xs text-neutral-500 hover:text-neutral-300"
                       >
@@ -904,12 +962,15 @@ export function ProjectSetupModal({
                     onChange={(e) => {
                       const newProvider = e.target.value as LLMProvider;
                       const firstModelForProvider = LLM_MODELS[newProvider][0].value;
+                      const currentTemp = localNodeDefaults.llm?.temperature ?? 0.7;
                       setLocalNodeDefaults(prev => ({
                         ...prev,
                         llm: {
                           ...prev.llm,
                           provider: newProvider,
                           model: firstModelForProvider,
+                          // Clamp temperature for Anthropic (max 1.0)
+                          ...(newProvider === "anthropic" && currentTemp > 1 ? { temperature: 1 } : {}),
                         }
                       }));
                     }}
@@ -948,7 +1009,7 @@ export function ProjectSetupModal({
                   <input
                     type="range"
                     min="0"
-                    max="2"
+                    max={(localNodeDefaults.llm?.provider || "google") === "anthropic" ? "1" : "2"}
                     step="0.1"
                     value={localNodeDefaults.llm?.temperature ?? 0.7}
                     onChange={(e) => {
