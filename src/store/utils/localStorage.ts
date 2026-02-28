@@ -29,6 +29,7 @@ export interface GenerateImageDefaults {
   resolution: string;
   model: string;
   useGoogleSearch: boolean;
+  useImageSearch: boolean;
 }
 
 const DEFAULT_GENERATE_IMAGE_SETTINGS: GenerateImageDefaults = {
@@ -36,6 +37,7 @@ const DEFAULT_GENERATE_IMAGE_SETTINGS: GenerateImageDefaults = {
   resolution: "1K",
   model: "nano-banana-pro",
   useGoogleSearch: false,
+  useImageSearch: false,
 };
 
 // Default provider settings

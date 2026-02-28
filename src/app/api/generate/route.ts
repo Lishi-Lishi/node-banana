@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
       aspectRatio,
       resolution,
       useGoogleSearch,
+      useImageSearch,
       selectedModel,
       parameters,
       dynamicInputs,
@@ -485,7 +486,8 @@ export async function POST(request: NextRequest) {
       geminiModel,
       aspectRatio,
       resolution,
-      useGoogleSearch
+      useGoogleSearch,
+      useImageSearch
     );
   } catch (error) {
     // Extract error information

@@ -14,6 +14,7 @@ import { GenerateResponse, ModelType } from "@/types";
 /*export const MODEL_MAP: Record<ModelType, string> = {
   "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
+  "nano-banana-2": "gemini-3.1-flash-image-preview",
 };
 
 /**
@@ -27,7 +28,8 @@ import { GenerateResponse, ModelType } from "@/types";
   model: ModelType,
   aspectRatio?: string,
   resolution?: string,
-  useGoogleSearch?: boolean
+  useGoogleSearch?: boolean,
+  useImageSearch?: boolean
 ): Promise<NextResponse<GenerateResponse>> {
   console.log(`[API:${requestId}] Gemini generation - Model: ${model}, Images: ${images?.length || 0}, Prompt: ${prompt?.length || 0} chars`);
 
@@ -71,17 +73,23 @@ import { GenerateResponse, ModelType } from "@/types";
     };
   }
 
-  // Add resolution only for Nano Banana Pro
-  if (model === "nano-banana-pro" && resolution) {
+  // Add resolution for Nano Banana Pro and Nano Banana 2
+  if ((model === "nano-banana-pro" || model === "nano-banana-2") && resolution) {
     if (!config.imageConfig) {
       config.imageConfig = {};
     }
     (config.imageConfig as Record<string, unknown>).imageSize = resolution;
   }
 
-  // Add tools array for Google Search (only Nano Banana Pro)
+  // Add tools array for Google Search (Nano Banana Pro and Nano Banana 2)
   const tools = [];
-  if (model === "nano-banana-pro" && useGoogleSearch) {
+  if (model === "nano-banana-2" && (useGoogleSearch || useImageSearch)) {
+    // Nano Banana 2 uses searchTypes to enable web and/or image search independently
+    const searchTypes: Record<string, Record<string, never>> = {};
+    if (useGoogleSearch) searchTypes.webSearch = {};
+    if (useImageSearch) searchTypes.imageSearch = {};
+    tools.push({ googleSearch: { searchTypes } });
+  } else if (model === "nano-banana-pro" && useGoogleSearch) {
     tools.push({ googleSearch: {} });
   }
 

@@ -1,5 +1,6 @@
 import {
   NodeType,
+  ModelType,
   ImageInputNodeData,
   AudioInputNodeData,
   AnnotationNodeData,
@@ -22,6 +23,7 @@ import {
   WorkflowNodeData,
   GroupColor,
   SelectedModel,
+  MODEL_DISPLAY_NAMES,
 } from "@/types";
 import { loadGenerateImageDefaults, loadNodeDefaults } from "./localStorage";
 
@@ -127,7 +129,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
       if (nodeDefaults.generateImage?.selectedModel) {
         selectedModel = nodeDefaults.generateImage.selectedModel;
       } else {
-        const modelDisplayName = legacyDefaults.model === "nano-banana" ? "Nano Banana" : "Nano Banana Pro";
+        const modelDisplayName = MODEL_DISPLAY_NAMES[legacyDefaults.model as ModelType] || legacyDefaults.model;
         selectedModel = {
           provider: "gemini",
           modelId: legacyDefaults.model,
@@ -139,6 +141,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
       const aspectRatio = nodeDefaults.generateImage?.aspectRatio ?? legacyDefaults.aspectRatio;
       const resolution = nodeDefaults.generateImage?.resolution ?? legacyDefaults.resolution;
       const useGoogleSearch = nodeDefaults.generateImage?.useGoogleSearch ?? legacyDefaults.useGoogleSearch;
+      const useImageSearch = nodeDefaults.generateImage?.useImageSearch ?? legacyDefaults.useImageSearch;
 
       return {
         inputImages: [],
@@ -149,6 +152,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         model: legacyDefaults.model, // Keep legacy model field for backward compat
         selectedModel,
         useGoogleSearch,
+        useImageSearch,
         status: "idle",
         error: null,
         imageHistory: [],
@@ -220,6 +224,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
           resolution: "1K",
           model: "nano-banana-pro",
           useGoogleSearch: false,
+          useImageSearch: false,
         },
         childNodeIds: [],
         gridRows: 2,
