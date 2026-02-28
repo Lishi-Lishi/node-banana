@@ -198,6 +198,7 @@ import { GenerateResponse } from "@/types";
 const MODEL_MAP: Record<string, string> = {
   "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
+  "nano-banana-2": "gemini-3.1-flash-image-preview", // 新增的 3.1 模型
 };
 
 /**
@@ -229,7 +230,8 @@ export async function generateWithGemini(
   model: string,
   aspectRatio?: string,
   resolution?: string,
-  useGoogleSearch?: boolean
+  useGoogleSearch?: boolean,
+  useImageSearch?: boolean // 新增参数
 ): Promise<NextResponse<GenerateResponse>> {
   
   // 1. 获取 Base URL (适配云雾)
@@ -282,9 +284,25 @@ export async function generateWithGemini(
     if (aspectRatio) {
       body.generationConfig.imageConfig.aspectRatio = aspectRatio;
     }
-    if (resolution && (targetId.includes("pro") || model.includes("pro"))) {
+    if (resolution && (model === "nano-banana-pro" || model === "nano-banana-2")) {
       body.generationConfig.imageConfig.imageSize = resolution;
     }
+
+// --- 新增：插入 Google Search / Image Search 逻辑 ---
+    const tools = [];
+    if (model === "nano-banana-2" && (useGoogleSearch || useImageSearch)) {
+      const searchTypes: Record<string, any> = {};
+      if (useGoogleSearch) searchTypes.webSearch = {};
+      if (useImageSearch) searchTypes.imageSearch = {};
+      tools.push({ googleSearch: { searchTypes } });
+    } else if (model === "nano-banana-pro" && useGoogleSearch) {
+      tools.push({ googleSearch: {} });
+    }
+
+    if (tools.length > 0) {
+      body.tools = tools;
+    }
+    // ---------------------------------------------------
 
     // 5. 发送 Fetch 请求
     const res = await fetch(url, {
