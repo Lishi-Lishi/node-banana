@@ -4,14 +4,14 @@
  * Handles image generation using Google's Gemini API models.
  */
 
-import { NextResponse } from "next/server";
+/**import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { GenerateResponse, ModelType } from "@/types";
 
 /**
  * Map model types to Gemini model IDs
  */
-export const MODEL_MAP: Record<ModelType, string> = {
+/*export const MODEL_MAP: Record<ModelType, string> = {
   "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
 };
@@ -19,7 +19,7 @@ export const MODEL_MAP: Record<ModelType, string> = {
 /**
  * Generate image using Gemini API (legacy/default path)
  */
-export async function generateWithGemini(
+/*export async function generateWithGemini(
   requestId: string,
   apiKey: string,
   prompt: string,
@@ -180,4 +180,149 @@ export async function generateWithGemini(
     },
     { status: 500 }
   );
+}
+*/
+
+import { NextResponse } from "next/server";
+import { GenerateResponse } from "@/types";
+
+// Map model types to Gemini model IDs
+const MODEL_MAP: Record<string, string> = {
+  "nano-banana": "gemini-2.5-flash-image",
+  "nano-banana-pro": "gemini-3-pro-image-preview",
+};
+
+/**
+ * 辅助函数：将图片 (URL 或 Base64) 转为纯 Base64 字符串
+ */
+async function imageUrlToBase64(url: string): Promise<string> {
+  if (url.startsWith("data:")) {
+    return url.split("base64,")[1];
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
+    const buffer = await res.arrayBuffer();
+    return Buffer.from(buffer).toString("base64");
+  } catch (error) {
+    console.error("Image conversion failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Generate image using Gemini API (通过云雾 Native Fetch)
+ */
+export async function generateWithGemini(
+  requestId: string,
+  apiKey: string,
+  prompt: string,
+  images: string[],
+  model: string,
+  aspectRatio?: string,
+  resolution?: string,
+  useGoogleSearch?: boolean
+): Promise<NextResponse<GenerateResponse>> {
+  
+  // 1. 获取 Base URL (适配云雾)
+  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, ""); 
+
+  const targetId = MODEL_MAP[model] || model || "gemini-2.5-flash-image";
+  const url = `${baseUrl}/v1beta/models/${targetId}:generateContent?key=${apiKey}`;
+
+  console.log(`[API:${requestId}] 🚀 POST Yunwu-Gemini Native: ${url}`);
+  console.log(`[API:${requestId}] Config: Model=${targetId}, Ratio=${aspectRatio || "Default"}, Res=${resolution || "Default"}`);
+
+  try {
+    const parts: any[] = [];
+
+    // 2. 处理图片，加上 "Image X:" 标签
+    if (images && images.length > 0) {
+      console.log(`[API:${requestId}] 🔄 Converting ${images.length} images...`);
+      for (let i = 0; i < images.length; i++) {
+        const imgUrl = images[i];
+        try {
+          const base64Data = await imageUrlToBase64(imgUrl);
+          parts.push({ text: `Image ${i + 1}:` });
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: base64Data
+            }
+          });
+        } catch (e) {
+          console.error(`[API:${requestId}] Failed to process image ${i + 1}`, e);
+        }
+      }
+    }
+
+    // 3. 处理 Prompt
+    if (prompt) {
+      parts.push({ text: `\nUser Prompt: ${prompt}` });
+    }
+
+    // 4. 构造 Body
+    const body: any = {
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+        imageConfig: {}
+      }
+    };
+
+    if (aspectRatio) {
+      body.generationConfig.imageConfig.aspectRatio = aspectRatio;
+    }
+    if (resolution && (targetId.includes("pro") || model.includes("pro"))) {
+      body.generationConfig.imageConfig.imageSize = resolution;
+    }
+
+    // 5. 发送 Fetch 请求
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[API:${requestId}] ❌ Gemini Native Error:`, errText);
+      throw new Error(`Cloud API Failed (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    const part = candidate?.content?.parts?.[0];
+
+    // 6. 解析图片返回结果
+    if (part?.inlineData?.data) {
+      const base64Data = part.inlineData.data;
+      const mimeType = part.inlineData.mimeType || "image/png";
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+      
+      console.log(`[API:${requestId}] ✅ Success! Image generated.`);
+      
+      // 返回与原版兼容的格式
+      return NextResponse.json({ 
+        success: true, 
+        image: dataUrl, 
+        contentType: "image" 
+      });
+    }
+
+    if (part?.text) {
+      console.warn(`[API:${requestId}] ⚠️ Gemini returned text:`, part.text);
+      throw new Error(`Model returned text instead of image: "${part.text}"`);
+    }
+
+    throw new Error("Unknown Gemini native response format");
+
+  } catch (error: any) {
+    console.error(`[API:${requestId}] 💥 Handler Error:`, error);
+    return NextResponse.json(
+      { success: false, error: error.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
 }
