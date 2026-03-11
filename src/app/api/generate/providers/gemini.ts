@@ -1,208 +1,175 @@
-/**
- * Gemini Provider for Generate API Route
- *
- * Handles image generation and video generation using Google's Gemini API models.
- */
-
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
-import { GenerateResponse, ModelType } from "@/types";
-import { GenerationOutput } from "@/lib/providers/types";
+import { GenerateResponse } from "@/types";
+import { GoogleGenAI } from "@google/genai"; // 必须引入，为了视频的轮询功能
 
-/**
- * Map model types to Gemini model IDs
- */
-export const MODEL_MAP: Record<ModelType, string> = {
+// --- 图片模型配置 ---
+const MODEL_MAP: Record<string, string> = {
   "nano-banana": "gemini-2.5-flash-image",
   "nano-banana-pro": "gemini-3-pro-image-preview",
   "nano-banana-2": "gemini-3.1-flash-image-preview",
 };
 
 /**
- * Generate image using Gemini API (legacy/default path)
+ * 辅助函数：将图片 (URL 或 Base64) 转为纯 Base64 字符串
+ */
+async function imageUrlToBase64(url: string): Promise<string> {
+  if (url.startsWith("data:")) {
+    return url.split("base64,")[1];
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
+    const buffer = await res.arrayBuffer();
+    return Buffer.from(buffer).toString("base64");
+  } catch (error) {
+    console.error("Image conversion failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * ==========================================
+ * 1. 核心图片生成逻辑 (依然使用原生极速 Fetch)
+ * ==========================================
  */
 export async function generateWithGemini(
   requestId: string,
   apiKey: string,
   prompt: string,
   images: string[],
-  model: ModelType,
+  model: string,
   aspectRatio?: string,
   resolution?: string,
   useGoogleSearch?: boolean,
   useImageSearch?: boolean
 ): Promise<NextResponse<GenerateResponse>> {
-  console.log(`[API:${requestId}] Gemini generation - Model: ${model}, Images: ${images?.length || 0}, Prompt: ${prompt?.length || 0} chars`);
+  
+  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, ""); 
 
-  // Extract base64 data and MIME types from data URLs
-  const imageData = (images || []).map((image, idx) => {
-    if (image.includes("base64,")) {
-      const [header, data] = image.split("base64,");
-      // Extract MIME type from header (e.g., "data:image/png;" -> "image/png")
-      const mimeMatch = header.match(/data:([^;]+)/);
-      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      console.log(`[API:${requestId}]   Image ${idx + 1}: ${mimeType}, ${(data.length / 1024).toFixed(1)}KB`);
-      return { data, mimeType };
-    }
-    console.log(`[API:${requestId}]   Image ${idx + 1}: raw, ${(image.length / 1024).toFixed(1)}KB`);
-    return { data: image, mimeType: "image/png" };
-  });
+  const targetId = MODEL_MAP[model] || model || "gemini-2.5-flash-image";
+  const url = `${baseUrl}/v1beta/models/${targetId}:generateContent?key=${apiKey}`;
 
-  // Initialize Gemini client
-  const ai = new GoogleGenAI({ apiKey });
+  console.log(`[API:${requestId}] 🚀 POST Yunwu-Gemini Image: ${url}`);
+  console.log(`[API:${requestId}] Config: Model=${targetId}, Ratio=${aspectRatio || "Default"}, Res=${resolution || "Default"}`);
 
-  // Build request parts array with prompt and all images
-  const requestParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-    { text: prompt },
-    ...imageData.map(({ data, mimeType }) => ({
-      inlineData: {
-        mimeType,
-        data,
-      },
-    })),
-  ];
+  try {
+    const parts: any[] = [];
 
-  // Build config object based on model capabilities
-  const config: Record<string, unknown> = {
-    responseModalities: ["IMAGE", "TEXT"],
-  };
-
-  // Add imageConfig for both models (both support aspect ratio)
-  if (aspectRatio) {
-    config.imageConfig = {
-      aspectRatio,
-    };
-  }
-
-  // Add resolution for Nano Banana Pro and Nano Banana 2
-  if ((model === "nano-banana-pro" || model === "nano-banana-2") && resolution) {
-    if (!config.imageConfig) {
-      config.imageConfig = {};
-    }
-    (config.imageConfig as Record<string, unknown>).imageSize = resolution;
-  }
-
-  // Add tools array for Google Search (Nano Banana Pro and Nano Banana 2)
-  const tools = [];
-  if (model === "nano-banana-2" && (useGoogleSearch || useImageSearch)) {
-    // Nano Banana 2 uses searchTypes to enable web and/or image search independently
-    const searchTypes: Record<string, Record<string, never>> = {};
-    if (useGoogleSearch) searchTypes.webSearch = {};
-    if (useImageSearch) searchTypes.imageSearch = {};
-    tools.push({ googleSearch: { searchTypes } });
-  } else if (model === "nano-banana-pro" && useGoogleSearch) {
-    tools.push({ googleSearch: {} });
-  }
-
-  console.log(`[API:${requestId}] Config: ${JSON.stringify(config)}`);
-
-  // Make request to Gemini
-  const geminiStartTime = Date.now();
-
-  const response = await ai.models.generateContent({
-    model: MODEL_MAP[model],
-    contents: [
-      {
-        role: "user",
-        parts: requestParts,
-      },
-    ],
-    config,
-    ...(tools.length > 0 && { tools }),
-  });
-
-  const geminiDuration = Date.now() - geminiStartTime;
-  console.log(`[API:${requestId}] Gemini API completed in ${geminiDuration}ms`);
-
-  // Extract image from response
-  const candidates = response.candidates;
-
-  if (!candidates || candidates.length === 0) {
-    console.error(`[API:${requestId}] No candidates in Gemini response`);
-    return NextResponse.json<GenerateResponse>(
-      {
-        success: false,
-        error: "No response from AI model",
-      },
-      { status: 500 }
-    );
-  }
-
-  const parts = candidates[0].content?.parts;
-  console.log(`[API:${requestId}] Response parts: ${parts?.length || 0}`);
-
-  if (!parts) {
-    console.error(`[API:${requestId}] No parts in Gemini candidate content`);
-    return NextResponse.json<GenerateResponse>(
-      {
-        success: false,
-        error: "No content in response",
-      },
-      { status: 500 }
-    );
-  }
-
-  // Find image part in response
-  for (const part of parts) {
-    if (part.inlineData && part.inlineData.data) {
-      const mimeType = part.inlineData.mimeType || "image/png";
-      const imgData = part.inlineData.data;
-      const imageSizeKB = (imgData.length / 1024).toFixed(1);
-
-      console.log(`[API:${requestId}] Output image: ${mimeType}, ${imageSizeKB}KB`);
-
-      const dataUrl = `data:${mimeType};base64,${imgData}`;
-
-      const responsePayload = { success: true, image: dataUrl };
-      const responseSize = JSON.stringify(responsePayload).length;
-      const responseSizeMB = (responseSize / (1024 * 1024)).toFixed(2);
-
-      if (responseSize > 4.5 * 1024 * 1024) {
-        console.warn(`[API:${requestId}] Response size (${responseSizeMB}MB) approaching Next.js 5MB limit`);
+    if (images && images.length > 0) {
+      console.log(`[API:${requestId}] 🔄 Converting ${images.length} images...`);
+      for (let i = 0; i < images.length; i++) {
+        const imgUrl = images[i];
+        try {
+          const base64Data = await imageUrlToBase64(imgUrl);
+          parts.push({ text: `Image ${i + 1}:` });
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: base64Data
+            }
+          });
+        } catch (e) {
+          console.error(`[API:${requestId}] Failed to process image ${i + 1}`, e);
+        }
       }
-
-      console.log(`[API:${requestId}] SUCCESS - Returning ${responseSizeMB}MB payload`);
-
-      return NextResponse.json<GenerateResponse>(responsePayload);
     }
-  }
 
-  // If no image found, check for text error
-  for (const part of parts) {
-    if (part.text) {
-      console.error(`[API:${requestId}] Gemini returned text instead of image: ${part.text.substring(0, 100)}`);
-      return NextResponse.json<GenerateResponse>(
-        {
-          success: false,
-          error: `Model returned text instead of image: ${part.text.substring(0, 200)}`,
-        },
-        { status: 500 }
-      );
+    if (prompt) {
+      parts.push({ text: `\nUser Prompt: ${prompt}` });
     }
-  }
 
-  console.error(`[API:${requestId}] No image or text found in Gemini response`);
-  return NextResponse.json<GenerateResponse>(
-    {
-      success: false,
-      error: "No image in response",
-    },
-    { status: 500 }
-  );
+    const body: any = {
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+        imageConfig: {}
+      }
+    };
+
+    if (aspectRatio) {
+      body.generationConfig.imageConfig.aspectRatio = aspectRatio;
+    }
+    if (resolution && (model === "nano-banana-pro" || model === "nano-banana-2")) {
+      body.generationConfig.imageConfig.imageSize = resolution;
+    }
+
+    const tools = [];
+    if (model === "nano-banana-2" && (useGoogleSearch || useImageSearch)) {
+      const searchTypes: Record<string, any> = {};
+      if (useGoogleSearch) searchTypes.webSearch = {};
+      if (useImageSearch) searchTypes.imageSearch = {};
+      tools.push({ googleSearch: { searchTypes } });
+    } else if (model === "nano-banana-pro" && useGoogleSearch) {
+      tools.push({ googleSearch: {} });
+    }
+
+    if (tools.length > 0) {
+      body.tools = tools;
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[API:${requestId}] ❌ Gemini Image Error:`, errText);
+      throw new Error(`Cloud API Failed (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    console.log(`[API:${requestId}] 🕵️‍♂️ Raw API Response (Image):`, JSON.stringify(data, null, 2));
+
+    const candidate = data.candidates?.[0];
+
+    if (candidate?.finishReason === "SAFETY") {
+        throw new Error("生成失败：触发了安全过滤 (Safety Filter)，请检查提示词或垫图是否违规。");
+    }
+
+    const part = candidate?.content?.parts?.[0];
+
+    if (part?.inlineData?.data) {
+      const base64Data = part.inlineData.data;
+      const mimeType = part.inlineData.mimeType || "image/png";
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+      
+      console.log(`[API:${requestId}] ✅ Success! Image generated.`);
+      return NextResponse.json({ success: true, image: dataUrl, contentType: "image" });
+    }
+
+    if (part?.text) {
+      console.warn(`[API:${requestId}] ⚠️ Gemini returned text:`, part.text);
+      throw new Error(`Model returned text instead of image: "${part.text}"`);
+    }
+
+    throw new Error("Unknown Gemini native response format");
+
+  } catch (error: any) {
+    console.error(`[API:${requestId}] 💥 Handler Error:`, error);
+    return NextResponse.json(
+      { success: false, error: error.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
 }
 
 /**
- * Map internal Veo model IDs to Gemini API model IDs
+ * --- 视频模型配置 ---
  */
 const VEO_MODEL_MAP: Record<string, string> = {
-  "veo-3.1/text-to-video": "veo-3.1-generate-preview",
-  "veo-3.1/image-to-video": "veo-3.1-generate-preview",
-  "veo-3.1-fast/text-to-video": "veo-3.1-fast-generate-preview",
-  "veo-3.1-fast/image-to-video": "veo-3.1-fast-generate-preview",
+  "veo-3.1/text-to-video": "veo3.1",
+  "veo-3.1/image-to-video": "veo3.1",
+  "veo-3.1-fast/text-to-video": "veo3.1-fast",
+  "veo-3.1-fast/image-to-video": "veo3.1-fast",
 };
 
 /**
- * Generate video using Gemini API (Veo models)
+ * ==========================================
+ * 2. 核心视频生成逻辑 (SDK 劫持云雾通道)
+ * ==========================================
  */
 export async function generateWithGeminiVideo(
   requestId: string,
@@ -211,145 +178,127 @@ export async function generateWithGeminiVideo(
   prompt: string,
   images: string[],
   parameters: Record<string, unknown> = {},
-): Promise<GenerationOutput> {
-  const apiModelId = VEO_MODEL_MAP[modelId];
-  if (!apiModelId) {
-    return { success: false, error: `Unknown Veo model: ${modelId}` };
+): Promise<any> { 
+  
+  // 匹配云雾文档里的枚举模型名称
+  let targetModel = "veo3.1";
+  if (modelId.includes("fast")) {
+    targetModel = "veo3.1-fast";
   }
 
-  console.log(`[API:${requestId}] Gemini video generation - Model: ${apiModelId}, Prompt: ${prompt?.length || 0} chars, Images: ${images?.length || 0}`);
+  console.log(`[API:${requestId}] 🎬 Yunwu Video Start - Model: ${targetModel}`);
 
-  const ai = new GoogleGenAI({ apiKey });
+  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, "");
+  
+  // 1. 发送创建任务请求
+  const createUrl = `${baseUrl}/v1/video/create`;
 
-  // Build config from parameters
-  const config: Record<string, unknown> = {
-    numberOfVideos: 1,
+  const body: any = {
+    model: targetModel,
+    prompt: prompt,
   };
 
+  // 根据云雾文档，图片采用 images 数组参数
+  if (images && images.length > 0) {
+      body.images = images; 
+  }
+  
+  // 注入长宽比 (文档标明16:9或9:16)
   if (parameters.aspectRatio) {
-    config.aspectRatio = parameters.aspectRatio;
-  }
-  if (parameters.durationSeconds) {
-    config.durationSeconds = Number(parameters.durationSeconds);
-  }
-  if (parameters.resolution) {
-    config.resolution = parameters.resolution;
-  }
-  if (parameters.negativePrompt) {
-    config.negativePrompt = parameters.negativePrompt;
-  }
-  if (parameters.seed !== undefined && parameters.seed !== null && parameters.seed !== "") {
-    config.seed = Number(parameters.seed);
+      body.aspect_ratio = parameters.aspectRatio;
   }
 
-  // Build request args
-  const requestArgs: Record<string, unknown> = {
-    model: apiModelId,
-    prompt,
-    config,
-  };
-
-  // Validate image-to-video models have an image
-  if (modelId.includes("image-to-video") && (!images || images.length === 0)) {
-    console.error(`[API:${requestId}] Image required for image-to-video model: ${modelId}`);
-    return { success: false, error: "Image required for image-to-video model" };
-  }
-
-  // Add image for image-to-video models
-  if (images && images.length > 0 && modelId.includes("image-to-video")) {
-    const imageInput = images[0];
-    if (imageInput.includes("base64,")) {
-      const [header, data] = imageInput.split("base64,");
-      const mimeMatch = header.match(/data:([^;]+)/);
-      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      requestArgs.image = {
-        imageBytes: data,
-        mimeType,
-      };
-    } else {
-      requestArgs.image = {
-        imageBytes: imageInput,
-        mimeType: "image/png",
-      };
-    }
-  }
-
-  console.log(`[API:${requestId}] Veo config: ${JSON.stringify(config)}`);
-
-  // Start video generation (async operation)
-  const startTime = Date.now();
-
-  let operation;
   try {
-    operation = await ai.models.generateVideos(requestArgs as unknown as Parameters<typeof ai.models.generateVideos>[0]);
+    console.log(`[API:${requestId}] 🚀 发送创建任务请求...`);
+    
+    const res = await fetch(createUrl, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}` 
+      },
+      body: JSON.stringify(body)
+    });
 
-    // Poll for completion (10s intervals, 5min timeout)
-    const POLL_INTERVAL = 10_000;
-    const TIMEOUT = 5 * 60 * 1000;
-
-    while (!operation.done) {
-      const elapsed = Date.now() - startTime;
-      if (elapsed > TIMEOUT) {
-        console.error(`[API:${requestId}] Veo generation timed out after ${(elapsed / 1000).toFixed(0)}s`);
-        return { success: false, error: "Video generation timed out after 5 minutes" };
-      }
-
-      console.log(`[API:${requestId}] Veo polling... (${(elapsed / 1000).toFixed(0)}s elapsed)`);
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
-      operation = await ai.operations.getVideosOperation({ operation });
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[API:${requestId}] Veo generation failed: ${msg}`);
-    return { success: false, error: `Video generation failed: ${msg}` };
-  }
-
-  const duration = Date.now() - startTime;
-  console.log(`[API:${requestId}] Veo generation completed in ${(duration / 1000).toFixed(1)}s`);
-
-  // Extract generated video
-  const generatedVideos = operation.response?.generatedVideos;
-  if (!generatedVideos || generatedVideos.length === 0) {
-    console.error(`[API:${requestId}] No generated videos in Veo response`);
-    return { success: false, error: "No video generated. The content may have been filtered by safety policies." };
-  }
-
-  const videoUri = generatedVideos[0]?.video?.uri;
-  if (!videoUri) {
-    console.error(`[API:${requestId}] No video URI in Veo response`);
-    return { success: false, error: "No video URI in response" };
-  }
-
-  // Fetch the video (append API key for authentication)
-  const videoUrl = `${videoUri}&key=${apiKey}`;
-  console.log(`[API:${requestId}] Fetching video from URI...`);
-
-  const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 60_000);
-  try {
-    const videoResponse = await fetch(videoUrl, { signal: controller.signal });
-    if (!videoResponse.ok) {
-      console.error(`[API:${requestId}] Failed to fetch video: ${videoResponse.status}`);
-      return { success: false, error: `Failed to download generated video: ${videoResponse.status}` };
+    if (!res.ok) {
+      const errText = await res.text();
+      return { success: false, error: `创建任务报错: ${res.status} - ${errText}` };
     }
 
-    const videoBuffer = await videoResponse.arrayBuffer();
-    const videoSizeMB = (videoBuffer.byteLength / (1024 * 1024)).toFixed(2);
-    console.log(`[API:${requestId}] Video downloaded: ${videoSizeMB}MB`);
+    const data = await res.json();
+    const taskId = data.id || data.task_id;
+    
+    if (!taskId) {
+        return { success: false, error: "未获取到任务ID" };
+    }
 
-    const base64Video = Buffer.from(videoBuffer).toString("base64");
-    const dataUrl = `data:video/mp4;base64,${base64Video}`;
+    console.log(`[API:${requestId}] ✅ 任务创建成功! ID: ${taskId}, 开始轮询...`);
 
-    console.log(`[API:${requestId}] SUCCESS - Returning ${videoSizeMB}MB video`);
+    // ==========================================
+    // 2. 核心轮询逻辑 (基于 /v1/video/query)
+    // ==========================================
+    const queryUrl = `${baseUrl}/v1/video/query?id=${taskId}`;
 
-    return {
-      success: true,
-      outputs: [{ type: "video", data: dataUrl }],
-    };
+    const POLL_INTERVAL = 10_000; // 10秒查一次
+    const TIMEOUT = 5 * 60 * 1000; // 5分钟超时
+    const startTime = Date.now();
+
+    while (true) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > TIMEOUT) {
+            return { success: false, error: "视频生成超时 (5分钟未完成)" };
+        }
+
+        console.log(`[API:${requestId}] ⏳ 查询视频进度... (${(elapsed / 1000).toFixed(0)}s)`);
+        
+        const queryRes = await fetch(queryUrl, {
+            method: "GET",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                // 云雾文档中有些环境可能需要 Accept
+                "Accept": "application/json" 
+            }
+        });
+
+        if (!queryRes.ok) {
+            const errText = await queryRes.text();
+            console.error(`[API:${requestId}] ❌ 轮询接口报错:`, errText);
+            return { success: false, error: `轮询接口报错: ${queryRes.status}` };
+        }
+
+        const taskData = await queryRes.json();
+        const status = taskData.status;
+
+        console.log(`[API:${requestId}] 轮询状态: ${status}`);
+
+        // 成功状态 (匹配文档中的 completed 和 video_generation_completed)
+        if (status === "completed" || status === "video_generation_completed" || status === "success") {
+            const videoUrl = taskData.video_url; 
+            
+            if (!videoUrl) {
+                return { success: false, error: "视频生成成功，但未返回 video_url！" };
+            }
+
+            console.log(`[API:${requestId}] 🎉 视频生成成功! URL: ${videoUrl}`);
+
+            // 极速返回 URL 格式，让前端直接播放
+            return { 
+                success: true, 
+                outputs: [{ type: "video", url: videoUrl }] 
+            };
+        } 
+        // 失败状态
+        else if (status === "failed" || status === "error" || status === "video_generation_failed") {
+            return { success: false, error: `视频生成失败: 任务状态为 ${status}` };
+        }
+
+        // 继续等待
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
   } catch (error) {
-    console.error(`[API:${requestId}] Failed to download video: ${error}`);
-    return { success: false, error: "Failed to download generated video" };
-  } finally {
-    clearTimeout(fetchTimeout);
+    return { success: false, error: "请求或轮询过程发生异常" };
   }
 }

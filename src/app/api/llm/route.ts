@@ -45,7 +45,13 @@ async function generateWithGoogle(
     throw new Error("GEMINI_API_KEY not configured. Add it to .env.local or configure in Settings.");
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  // 👉 新增：劫持 Google SDK 走云雾代理
+  let baseUrl = process.env.GEMINI_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, "");
+  const ai = new GoogleGenAI({ 
+    apiKey,
+    httpOptions: { baseUrl } 
+  });
   const modelId = GOOGLE_MODEL_MAP[model];
 
   logger.info('api.llm', 'Calling Google AI API', {
@@ -155,7 +161,12 @@ async function generateWithOpenAI(
   }
 
   const startTime = Date.now();
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  
+  // 👉 新增：劫持 OpenAI 走云雾代理
+  let baseUrl = process.env.OPENAI_BASE_URL || "https://yunwu.ai/v1";
+  baseUrl = baseUrl.replace(/\/+$/, "");
+  
+  const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -246,7 +257,12 @@ async function generateWithAnthropic(
   content.push({ type: "text", text: prompt });
 
   const startTime = Date.now();
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  
+  // 👉 新增：劫持 Anthropic(Claude) 走云雾代理
+  let baseUrl = process.env.ANTHROPIC_BASE_URL || "https://yunwu.ai";
+  baseUrl = baseUrl.replace(/\/+$/, "");
+  
+  const response = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
