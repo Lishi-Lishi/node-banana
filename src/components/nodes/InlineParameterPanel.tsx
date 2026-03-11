@@ -57,7 +57,7 @@ function InlineParameterPanelInner({
       {/* Content area — smooth height animation */}
       <div
         id={`params-${nodeId}`}
-        className="nodrag nopan nowheel bg-[#2a2a2a] overflow-hidden transition-[max-height] duration-150 ease-out"
+        className="nodrag nopan nowheel bg-[#2a2a2a] overflow-hidden transition-[max-height] duration-150 ease-out rounded-b-lg"
         style={{ maxHeight: expanded ? contentHeight : 0 }}
       >
         <div ref={contentRef} className="px-3 pt-2 pb-3 rounded-b-lg">

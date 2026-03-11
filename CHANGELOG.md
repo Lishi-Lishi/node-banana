@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-03-12
+
+### Fixed
+
+- Ensure auto-routed prompts retain correct individual item text
+- Add rounded corners to ImageInput image and InlineParameterPanel settings
+
+### Other
+
+- Increase ArrayNode top padding to match side padding
+- Add top padding and max-width to ArrayNode top fields
+- Update ArrayNode layout to match new design language
+
 ## [1.1.0] - 2026-03-12
 
 ### Added
