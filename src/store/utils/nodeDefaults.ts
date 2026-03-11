@@ -39,7 +39,7 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   audioInput: { width: 300, height: 200 },
   annotation: { width: 300, height: 280 },
   prompt: { width: 320, height: 220 },
-  array: { width: 360, height: 360 },
+  array: { width: 340, height: 260 },
   promptConstructor: { width: 340, height: 280 },
   nanoBanana: { width: 300, height: 300 },
   generateVideo: { width: 300, height: 300 },
