@@ -6,6 +6,18 @@ import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { OutputGalleryNodeData } from "@/types";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
+
+function AdaptiveGalleryThumbnail({ src, alt, nodeId }: { src: string; alt: string; nodeId: string }) {
+  const adaptiveSrc = useAdaptiveImageSrc(src, nodeId);
+  return (
+    <img
+      src={adaptiveSrc ?? undefined}
+      alt={alt}
+      className="w-full h-full object-cover"
+    />
+  );
+}
 
 type OutputGalleryNodeType = Node<OutputGalleryNodeData, "outputGallery">;
 
@@ -136,11 +148,7 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
                   onClick={() => openLightbox(idx)}
                   className="aspect-square rounded border border-neutral-700 hover:border-neutral-500 overflow-hidden transition-colors"
                 >
-                  <img
-                    src={img}
-                    alt={`Image ${idx + 1}`}
-                    className="w-full h-full object-cover"
-                  />
+                  <AdaptiveGalleryThumbnail src={img} alt={`Image ${idx + 1}`} nodeId={id} />
                 </button>
               ))}
             </div>

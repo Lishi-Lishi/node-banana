@@ -6,11 +6,13 @@ import { BaseNode } from "./BaseNode";
 import { useCommentNavigation } from "@/hooks/useCommentNavigation";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { ImageInputNodeData } from "@/types";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 type ImageInputNodeType = Node<ImageInputNodeData, "imageInput">;
 
 export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeType>) {
   const nodeData = data;
+  const adaptiveImage = useAdaptiveImageSrc(nodeData.image, id);
   const commentNavigation = useCommentNavigation(id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -109,7 +111,7 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
       {nodeData.image ? (
         <div className="relative group w-full h-full">
           <img
-            src={nodeData.image}
+            src={adaptiveImage ?? undefined}
             alt={nodeData.filename || "Uploaded image"}
             className="w-full h-full object-cover rounded-lg"
           />

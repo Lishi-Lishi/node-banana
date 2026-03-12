@@ -969,7 +969,7 @@ function EaseCurveControls({ node }: { node: Node }) {
   return (
     <div className="space-y-3 relative">
       {isInherited && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/80 backdrop-blur-sm rounded z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/90 rounded z-10">
           <p className="text-sm text-neutral-200 font-medium">Settings inherited</p>
           <p className="text-[11px] text-neutral-400 mt-1">Break connection to edit manually</p>
           <button

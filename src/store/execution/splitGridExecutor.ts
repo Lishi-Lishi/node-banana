@@ -11,8 +11,8 @@ import type { NodeExecutionContext } from "./types";
 export async function executeSplitGrid(ctx: NodeExecutionContext): Promise<void> {
   const { node, getConnectedInputs, updateNodeData } = ctx;
 
-  const { images } = getConnectedInputs(node.id);
-  const sourceImage = images[0] || null;
+  const connectedInputs = getConnectedInputs(node.id);
+  const sourceImage = connectedInputs.images[0] || null;
 
   if (!sourceImage) {
     updateNodeData(node.id, {

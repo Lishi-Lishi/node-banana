@@ -15,6 +15,7 @@ import { ProviderBadge } from "./ProviderBadge";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 /** Reorder items so they read column-first in a row-based CSS grid.
  *  e.g. [1,2,3,4,5,6,7,8] with 2 cols → [1,5,2,6,3,7,4,8] */
@@ -54,6 +55,7 @@ type NanoBananaNodeType = Node<NanoBananaNodeData, "nanoBanana">;
 
 export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNodeType>) {
   const nodeData = data;
+  const adaptiveOutputImage = useAdaptiveImageSrc(data.outputImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const generationsPath = useWorkflowStore((state) => state.generationsPath);
   // Use stable selector for API keys to prevent unnecessary re-fetches
@@ -684,7 +686,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
         {nodeData.outputImage ? (
           <>
             <img
-              src={nodeData.outputImage}
+              src={adaptiveOutputImage ?? undefined}
               alt="Generated"
               className="w-full h-full object-cover"
             />
@@ -767,7 +769,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
 
             {/* Carousel controls - overlaid on image bottom */}
             {hasCarouselImages && (
-              <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-2 py-1.5 bg-neutral-900/60 backdrop-blur-sm">
+              <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-2 py-1.5 bg-neutral-900/80">
                 <button
                   onClick={handleCarouselPrevious}
                   disabled={isLoadingCarouselImage}

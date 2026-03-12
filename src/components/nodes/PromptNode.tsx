@@ -112,7 +112,7 @@ export function PromptNode({ id, data, selected }: NodeProps<PromptNodeType>) {
           placeholder={hasIncomingTextConnection ? "Text from connected node (editable)..." : "Describe what to generate..."}
           className="nodrag nopan nowheel w-full h-full p-3 pb-7 text-xs leading-relaxed text-neutral-100 bg-neutral-800 rounded-t-lg resize-none focus:outline-none placeholder:text-neutral-500"
         />
-        <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-1.5 bg-neutral-900/80 backdrop-blur-sm rounded-b-lg">
+        <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-1.5 bg-neutral-900/90 rounded-b-lg">
           <button
             onClick={() => setShowVarDialog(true)}
             className="nodrag nopan text-[10px] text-blue-400 hover:text-blue-300 transition-colors"

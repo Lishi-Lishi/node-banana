@@ -3,7 +3,7 @@
 import { ReactNode, useCallback, useRef, useLayoutEffect } from "react";
 import { Node, NodeResizer, OnResize, useReactFlow } from "@xyflow/react";
 import { useWorkflowStore } from "@/store/workflowStore";
-import { isPanningRef } from "@/components/WorkflowCanvas";
+import { isPanningRef, isDraggingNodeRef } from "@/components/WorkflowCanvas";
 import { getMediaDimensions, calculateAspectFitSize } from "@/utils/nodeDimensions";
 
 const DEFAULT_NODE_DIMENSION = 300;
@@ -296,16 +296,16 @@ export function BaseNode({
           ${!fullBleed && selected && settingsExpanded ? "border-blue-500" : ""}
           ${className}
         `}
-        onMouseEnter={() => {
-          if (isPanningRef.current) return;
+        onMouseEnter={(e) => {
+          if (e.buttons !== 0 || isPanningRef.current || isDraggingNodeRef.current) return;
           setHoveredNodeId(id);
         }}
-        onMouseLeave={() => {
-          if (isPanningRef.current) return;
+        onMouseLeave={(e) => {
+          if (e.buttons !== 0 || isPanningRef.current || isDraggingNodeRef.current) return;
           setHoveredNodeId(null);
         }}
       >
-        <div ref={contentRef} className={contentClassName ?? (fullBleed ? "flex-1 min-h-0 relative" : "px-3 pb-4 flex-1 min-h-0 overflow-hidden flex flex-col")}>{children}</div>
+        <div ref={contentRef} style={{ contain: "layout style" }} className={contentClassName ?? (fullBleed ? "flex-1 min-h-0 relative" : "px-3 pb-4 flex-1 min-h-0 overflow-hidden flex flex-col")}>{children}</div>
       </div>
       {settingsPanel && (
         <div ref={settingsPanelRef}>

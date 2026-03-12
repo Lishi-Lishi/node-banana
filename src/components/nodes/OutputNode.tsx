@@ -8,6 +8,7 @@ import { useWorkflowStore } from "@/store/workflowStore";
 import { OutputNodeData } from "@/types";
 import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 import { useVideoAutoplay } from "@/hooks/useVideoAutoplay";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 type OutputNodeType = Node<OutputNodeData, "output">;
 
@@ -49,6 +50,8 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
     return nodeData.image;
   }, [nodeData.audio, nodeData.video, nodeData.image]);
 
+  const imageSrc = !isAudio && !isVideo ? contentSrc : null;
+  const adaptiveImage = useAdaptiveImageSrc(imageSrc, id);
   const videoBlobUrl = useVideoBlobUrl(isVideo ? contentSrc ?? null : null);
 
   // Auto-trigger execution when a new connection is made
@@ -162,7 +165,7 @@ export function OutputNode({ id, data, selected }: NodeProps<OutputNodeType>) {
                   />
                 ) : (
                   <img
-                    src={contentSrc}
+                    src={adaptiveImage ?? contentSrc}
                     alt="Output"
                     className="w-full h-full object-cover"
                   />
