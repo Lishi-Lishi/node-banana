@@ -257,7 +257,7 @@ export function PromptConstructorNode({ id, data, selected }: NodeProps<PromptCo
 
         {/* Footer - available vars + unresolved warning */}
         {(availableVariables.length > 0 || unresolvedVars.length > 0) && (
-          <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-1.5 bg-neutral-900/80 backdrop-blur-sm rounded-b-lg text-[10px] pointer-events-none flex items-center justify-between gap-2">
+          <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-1.5 bg-neutral-900/90 rounded-b-lg text-[10px] pointer-events-none flex items-center justify-between gap-2">
             <span className="text-neutral-500 truncate">
               {availableVariables.length > 0 ? `Available: ${availableVariables.map(v => `@${v.name}`).join(', ')}` : ''}
             </span>

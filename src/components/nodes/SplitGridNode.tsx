@@ -1,20 +1,43 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useMemo } from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { SplitGridNodeData } from "@/types";
 import { SplitGridSettingsModal } from "../SplitGridSettingsModal";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 type SplitGridNodeType = Node<SplitGridNodeData, "splitGrid">;
 
 export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeType>) {
   const nodeData = data;
+  const adaptiveSourceImage = useAdaptiveImageSrc(nodeData.sourceImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
+  const getConnectedInputs = useWorkflowStore((state) => state.getConnectedInputs);
+  const edges = useWorkflowStore((state) => state.edges);
+  const nodes = useWorkflowStore((state) => state.nodes);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Reactively track the connected source image
+  const hasIncomingImageConnection = useMemo(() => {
+    return edges.some((edge) => edge.target === id && edge.targetHandle === "image");
+  }, [edges, id]);
+
+  const connectedSourceImage = useMemo(() => {
+    if (!hasIncomingImageConnection) return null;
+    const { images } = getConnectedInputs(id);
+    return images[0] || null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasIncomingImageConnection, id, getConnectedInputs, nodes]);
+
+  useEffect(() => {
+    if (connectedSourceImage !== nodeData.sourceImage) {
+      updateNodeData(id, { sourceImage: connectedSourceImage });
+    }
+  }, [connectedSourceImage, id, updateNodeData, nodeData.sourceImage]);
 
   // Show settings modal on first creation (when not configured)
   useEffect(() => {
@@ -67,7 +90,7 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
         {nodeData.sourceImage ? (
           <div className="relative w-full h-full">
             <img
-              src={nodeData.sourceImage}
+              src={adaptiveSourceImage ?? undefined}
               alt="Source grid"
               className="w-full h-full object-contain rounded-lg"
             />
@@ -122,7 +145,7 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
         )}
 
         {/* Controls overlay pinned at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-2 bg-neutral-900/80 backdrop-blur-sm rounded-b-lg space-y-1">
+        <div className="absolute bottom-0 left-0 right-0 z-10 px-3 py-2 bg-neutral-900/90 rounded-b-lg space-y-1">
           {/* Config summary */}
           <div className="flex items-center justify-between text-[10px] text-neutral-400">
             <span>{nodeData.gridRows}x{nodeData.gridCols} grid ({nodeData.targetCount} images)</span>

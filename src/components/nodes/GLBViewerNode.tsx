@@ -8,6 +8,7 @@ import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { useToast } from "@/components/Toast";
 import { GLBViewerNodeData } from "@/types";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
@@ -201,6 +202,7 @@ function LoadingIndicator() {
 
 export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeType>) {
   const nodeData = data as GLBViewerNodeData;
+  const adaptiveCapturedImage = useAdaptiveImageSrc(nodeData.capturedImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<(() => string | null) | null>(null);
@@ -478,7 +480,7 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
                 </button>
               </div>
               <img
-                src={nodeData.capturedImage}
+                src={adaptiveCapturedImage ?? undefined}
                 alt="Captured 3D render"
                 className="w-full rounded border border-neutral-700 bg-neutral-900"
               />

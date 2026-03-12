@@ -166,6 +166,11 @@ export function getConnectedInputsPure(
     });
   }
 
+  // Cache passthrough node results so multiple edges from the same router/switch
+  // all receive correct data (the _visited set prevents re-traversal, so we cache
+  // the result from the first traversal and reuse it for subsequent edges).
+  const passthroughCache = new Map<string, ConnectedInputs>();
+
   edges
     .filter((edge) => edge.target === nodeId)
     .forEach((edge) => {
@@ -177,7 +182,9 @@ export function getConnectedInputsPure(
 
       // Router passthrough — traverse upstream to find actual data source
       if (sourceNode.type === "router") {
-        const routerInputs = getConnectedInputsPure(sourceNode.id, nodes, edges, _visited, dimmedNodeIds);
+        const routerInputs = passthroughCache.get(sourceNode.id)
+          ?? getConnectedInputsPure(sourceNode.id, nodes, edges, _visited, dimmedNodeIds);
+        passthroughCache.set(sourceNode.id, routerInputs);
         // Determine which type this edge carries based on the source handle
         const edgeType = edge.sourceHandle; // Will be "image", "text", "video", "audio", "3d", or "easeCurve"
 
@@ -210,7 +217,9 @@ export function getConnectedInputsPure(
         }
 
         // Enabled switch: recursively get upstream data (same pattern as router)
-        const switchInputs = getConnectedInputsPure(sourceNode.id, nodes, edges, _visited, dimmedNodeIds);
+        const switchInputs = passthroughCache.get(sourceNode.id)
+          ?? getConnectedInputsPure(sourceNode.id, nodes, edges, _visited, dimmedNodeIds);
+        passthroughCache.set(sourceNode.id, switchInputs);
         const edgeType = switchData.inputType;
 
         if (edgeType === "image") {

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-03-12
+
+### Added
+
+- Adaptive image resolution scaling — swaps full-res images for JPEG thumbnails when nodes are small on screen
+
+### Fixed
+
+- Router/switch passthrough losing data when multiple types (text + image) flow through the same router to one target
+- SplitGrid node Split button permanently disabled — sourceImage now updates reactively when an edge is connected
+- Node connection handles clipped at edges — removed paint containment that acted like overflow hidden
+- Thumbnail cache key collisions causing wrong images on nodes
+- Pending thumbnail map not cleaned up on rejection, causing stale entries
+- Pointer-events on node images/content blocking pan and drag interactions
+- Hover state updates firing during node drag, causing unnecessary re-renders
+- Hover events not blocked during mouse-down drag
+- backdrop-blur-sm causing poor rendering performance on Windows
+
 ## [1.1.1] - 2026-03-12
 
 ### Fixed

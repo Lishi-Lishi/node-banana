@@ -40,6 +40,19 @@ body {
   font-family: inherit;
 }
 
+/* Skip hit-testing on images inside nodes — parent containers handle all
+   click/hover events. Prevents expensive bitmap decoding during mouse movement. */
+.react-flow__node img {
+  pointer-events: none;
+}
+
+/* During active panning or node dragging, disable pointer events on all node
+   content to eliminate expensive browser hit-testing against the DOM tree.
+   The class is toggled on <html> via direct DOM access (no React re-render). */
+.canvas-interacting .react-flow__node > * {
+  pointer-events: none;
+}
+
 /* Remove default React Flow styling for output nodes to match custom nodes */
 .react-flow__node-output {
   border: none !important;

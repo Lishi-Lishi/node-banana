@@ -5,11 +5,13 @@ import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { VideoFrameGrabNodeData } from "@/types";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 type VideoFrameGrabNodeType = Node<VideoFrameGrabNodeData, "videoFrameGrab">;
 
 export function VideoFrameGrabNode({ id, data, selected }: NodeProps<VideoFrameGrabNodeType>) {
   const nodeData = data;
+  const adaptiveOutputImage = useAdaptiveImageSrc(nodeData.outputImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
@@ -83,7 +85,7 @@ export function VideoFrameGrabNode({ id, data, selected }: NodeProps<VideoFrameG
           {nodeData.outputImage ? (
             <>
               <img
-                src={nodeData.outputImage}
+                src={adaptiveOutputImage ?? undefined}
                 className="absolute inset-0 w-full h-full object-contain rounded"
                 alt="Extracted frame"
               />

@@ -6,6 +6,7 @@ import { BaseNode } from "./BaseNode";
 import { useAnnotationStore } from "@/store/annotationStore";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { AnnotationNodeData } from "@/types";
+import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 
 type AnnotationNodeType = Node<AnnotationNodeData, "annotation">;
 
@@ -89,6 +90,7 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
   }, [id, updateNodeData]);
 
   const displayImage = nodeData.outputImage || nodeData.sourceImage;
+  const adaptiveDisplayImage = useAdaptiveImageSrc(displayImage, id);
 
   return (
     <BaseNode
@@ -124,7 +126,7 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
           onClick={handleEdit}
         >
           <img
-            src={displayImage}
+            src={adaptiveDisplayImage ?? undefined}
             alt="Annotated"
             className="w-full h-full object-contain"
           />

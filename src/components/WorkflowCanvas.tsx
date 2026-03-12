@@ -268,6 +268,8 @@ const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: num
 
 /** Shared ref so child components (BaseNode) can check panning state without re-rendering */
 export const isPanningRef = { current: false };
+/** Shared ref so child components (BaseNode) can skip hover updates during node drags */
+export const isDraggingNodeRef = { current: false };
 
 export function WorkflowCanvas() {
   const { nodes, edges, groups, isModalOpen, showQuickstart, navigationTarget, canvasNavigationSettings, dimmedNodeIds } =
@@ -1962,9 +1964,10 @@ export function WorkflowCanvas() {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
-        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); }}
-        onMoveEnd={() => { isPanningRef.current = false; }}
-        onNodeDragStop={handleNodeDragStop}
+        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); }}
+        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); }}
+        onNodeDragStart={() => { isDraggingNodeRef.current = true; document.documentElement.classList.add("canvas-interacting"); }}
+        onNodeDragStop={(event, node) => { isDraggingNodeRef.current = false; document.documentElement.classList.remove("canvas-interacting"); handleNodeDragStop(event, node); }}
         onSelectionChange={handleSelectionChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
