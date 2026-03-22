@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-03-22
+
+### Fixed
+
+- Clamp expand height to minHeight and resolve text through switch nodes
+- Move ImageInputNode handles after visual content to prevent z-order clipping
+- Add z-index to handles so they paint above positioned node content
+- Move overflow-clip from contentClassName to inner visual wrappers to prevent handle clipping
+- Move panel height correction from loadWorkflow into BaseNode render
+- Prevent node height accumulation with inline parameters on reload
+- Update WelcomeModal test to match bg-black/60 backdrop class
+- Resolve prompt variables through router nodes for PromptConstructor
+- Use overflow-visible on non-fullBleed nodes to prevent handle clipping
+
+### Other
+
+- Replace ArrayNode auto-route icon with Lucide split icon
+
 ## [1.1.2] - 2026-03-12
 
 ### Added

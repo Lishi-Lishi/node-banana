@@ -96,7 +96,7 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
     <BaseNode
       id={id}
       selected={selected}
-      contentClassName="flex-1 min-h-0 overflow-clip"
+      contentClassName="flex-1 min-h-0"
       aspectFitMedia={nodeData.outputImage}
     >
       <input
@@ -122,7 +122,7 @@ export function AnnotationNode({ id, data, selected }: NodeProps<AnnotationNodeT
 
       {displayImage ? (
         <div
-          className="relative group cursor-pointer w-full h-full"
+          className="relative group cursor-pointer w-full h-full overflow-clip rounded-lg"
           onClick={handleEdit}
         >
           <img

@@ -19,12 +19,18 @@ function arraysEqual(a: string[], b: string[]): boolean {
 }
 
 export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
-  const nodeData = data;
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const addNode = useWorkflowStore((state) => state.addNode);
   const onConnect = useWorkflowStore((state) => state.onConnect);
   const nodes = useWorkflowStore((state) => state.nodes);
   const edges = useWorkflowStore((state) => state.edges);
+
+  // Derive nodeData from the Zustand store (already subscribed via `nodes`)
+  // rather than React Flow props, so settings changes are reflected immediately.
+  const nodeData = useMemo(() => {
+    const n = nodes.find((nd) => nd.id === id);
+    return (n?.data as ArrayNodeData) ?? data;
+  }, [nodes, id, data]);
   const { setNodes, getNodes } = useReactFlow();
   const lastSyncedInputRef = useRef<string | null>(null);
   const lastDerivedWriteRef = useRef<string | null>(null);
@@ -103,11 +109,36 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
     });
   }, [id, nodeData.error, nodeData.outputItems, nodeData.outputText, parsed.error, parsed.items, updateNodeData]);
 
-  const handleBasicModeChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      updateNodeData(id, { splitMode: e.target.value as ArrayNodeData["splitMode"] });
+  // Helper: reparse and update outputs atomically whenever any split setting changes.
+  // Reads fresh data from the Zustand store (not React Flow props) to avoid stale closures.
+  const updateSettingsAndReparse = useCallback(
+    (partialSettings: Partial<Pick<ArrayNodeData, "splitMode" | "delimiter" | "regexPattern" | "trimItems" | "removeEmpty">>) => {
+      const freshNode = useWorkflowStore.getState().nodes.find((n) => n.id === id);
+      if (!freshNode) return;
+      const fresh = freshNode.data as ArrayNodeData;
+      const merged = {
+        splitMode: partialSettings.splitMode ?? fresh.splitMode,
+        delimiter: partialSettings.delimiter ?? fresh.delimiter,
+        regexPattern: partialSettings.regexPattern ?? fresh.regexPattern,
+        trimItems: partialSettings.trimItems ?? fresh.trimItems,
+        removeEmpty: partialSettings.removeEmpty ?? fresh.removeEmpty,
+      };
+      const result = parseTextToArray(fresh.inputText, merged);
+      updateNodeData(id, {
+        ...partialSettings,
+        outputItems: result.items,
+        outputText: JSON.stringify(result.items),
+        error: result.error,
+      });
     },
     [id, updateNodeData]
+  );
+
+  const handleBasicModeChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      updateSettingsAndReparse({ splitMode: e.target.value as ArrayNodeData["splitMode"] });
+    },
+    [updateSettingsAndReparse]
   );
 
   const previewItems = parsed.items;
@@ -203,8 +234,11 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
         className="nodrag nopan absolute top-2 right-2 z-10 shrink-0 p-1 bg-[#1a1a1a] rounded-md text-neutral-400 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         title="Auto-route to Prompts"
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v6m0 0a2 2 0 104 0 2 2 0 00-4 0zm0 0v7a3 3 0 003 3h6m0 0a2 2 0 100 4 2 2 0 000-4zm0 0v-6a3 3 0 013-3h0" />
+        <svg className="w-3.5 h-3.5 rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 3h5v5" />
+          <path d="M8 3H3v5" />
+          <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3" />
+          <path d="m15 9 6-6" />
         </svg>
       </button>
 
@@ -227,7 +261,7 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
             <label className="shrink-0 text-[11px] text-neutral-400">By</label>
             <input
               value={nodeData.delimiter}
-              onChange={(e) => updateNodeData(id, { delimiter: e.target.value })}
+              onChange={(e) => updateSettingsAndReparse({ delimiter: e.target.value })}
               placeholder="*"
               className="nodrag nopan flex-1 min-w-0 text-[11px] py-1 px-2 bg-[#1a1a1a] rounded-md focus:outline-none focus:ring-1 focus:ring-neutral-600 text-white"
             />
@@ -239,7 +273,7 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
             <label className="shrink-0 text-[11px] text-neutral-400">By</label>
             <input
               value={nodeData.regexPattern}
-              onChange={(e) => updateNodeData(id, { regexPattern: e.target.value })}
+              onChange={(e) => updateSettingsAndReparse({ regexPattern: e.target.value })}
               placeholder="/\\n+/"
               className="nodrag nopan flex-1 min-w-0 text-[11px] py-1 px-2 bg-[#1a1a1a] rounded-md focus:outline-none focus:ring-1 focus:ring-neutral-600 text-white"
             />
@@ -264,7 +298,7 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
                 <input
                   type="checkbox"
                   checked={nodeData.trimItems}
-                  onChange={(e) => updateNodeData(id, { trimItems: e.target.checked })}
+                  onChange={(e) => updateSettingsAndReparse({ trimItems: e.target.checked })}
                   className="nodrag nopan w-3 h-3 rounded bg-[#1a1a1a] text-neutral-600 focus:ring-1 focus:ring-neutral-600 focus:ring-offset-0"
                 />
                 Trim
@@ -273,7 +307,7 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
                 <input
                   type="checkbox"
                   checked={nodeData.removeEmpty}
-                  onChange={(e) => updateNodeData(id, { removeEmpty: e.target.checked })}
+                  onChange={(e) => updateSettingsAndReparse({ removeEmpty: e.target.checked })}
                   className="nodrag nopan w-3 h-3 rounded bg-[#1a1a1a] text-neutral-600 focus:ring-1 focus:ring-neutral-600 focus:ring-offset-0"
                 />
                 Remove empty

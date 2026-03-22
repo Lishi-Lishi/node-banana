@@ -120,6 +120,41 @@ function getSourceOutput(
 }
 
 /**
+ * Resolves text source nodes through router (passthrough) nodes.
+ * Given a list of directly-connected source nodes, expands any router nodes
+ * by recursively following their upstream text connections to find the actual
+ * text-producing source nodes.
+ */
+export function resolveTextSourcesThroughRouters(
+  sourceNodes: WorkflowNode[],
+  allNodes: WorkflowNode[],
+  edges: { source: string; target: string; targetHandle?: string | null }[],
+  visited?: Set<string>
+): WorkflowNode[] {
+  const seen = visited ?? new Set<string>();
+  const resolved: WorkflowNode[] = [];
+
+  for (const node of sourceNodes) {
+    if (seen.has(node.id)) continue;
+    seen.add(node.id);
+
+    if (node.type === "router" || node.type === "switch") {
+      const upstreamNodes = edges
+        .filter((e) => e.target === node.id && e.targetHandle === "text")
+        .map((e) => allNodes.find((n) => n.id === e.source))
+        .filter((n): n is WorkflowNode => n !== undefined);
+      resolved.push(
+        ...resolveTextSourcesThroughRouters(upstreamNodes, allNodes, edges, seen)
+      );
+    } else {
+      resolved.push(node);
+    }
+  }
+
+  return resolved;
+}
+
+/**
  * Get all connected inputs for a node.
  * Pure function version of workflowStore.getConnectedInputs.
  */

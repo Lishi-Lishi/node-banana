@@ -204,7 +204,7 @@ export function VideoTrimNode({ id, data, selected }: NodeProps<VideoTrimNodeTyp
       <BaseNode
         id={id}
         selected={selected}
-        contentClassName="flex-1 min-h-0 overflow-clip"
+        contentClassName="flex-1 min-h-0"
         minWidth={360}
         minHeight={360}
       >
