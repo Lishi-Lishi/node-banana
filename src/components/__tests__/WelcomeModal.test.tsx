@@ -81,7 +81,7 @@ describe("WelcomeModal", () => {
         />
       );
 
-      const backdrop = container.querySelector(".bg-black\\/50");
+      const backdrop = container.querySelector(".bg-black\\/60");
       expect(backdrop).toBeInTheDocument();
     });
   });

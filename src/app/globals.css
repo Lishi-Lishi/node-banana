@@ -79,6 +79,7 @@ body {
   border-radius: 50%;
   border: 2px solid white;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  z-index: 5;
 }
 
 /* Larger invisible hit area for easier clicking, especially when zoomed out */

@@ -6,6 +6,7 @@ import { BaseNode } from "./BaseNode";
 import { usePromptAutocomplete } from "@/hooks/usePromptAutocomplete";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { PromptConstructorNodeData, PromptNodeData, LLMGenerateNodeData, AvailableVariable } from "@/types";
+import { resolveTextSourcesThroughRouters } from "@/store/utils/connectedInputs";
 import { parseVarTags } from "@/utils/parseVarTags";
 
 type PromptConstructorNodeType = Node<PromptConstructorNodeData, "promptConstructor">;
@@ -31,10 +32,11 @@ export function PromptConstructorNode({ id, data, selected }: NodeProps<PromptCo
 
   // Get available variables from connected prompt nodes (named variables + inline <var> tags)
   const availableVariables = useMemo((): AvailableVariable[] => {
-    const connectedTextNodes = edges
+    const directTextNodes = edges
       .filter((e) => e.target === id && e.targetHandle === "text")
       .map((e) => nodes.find((n) => n.id === e.source))
       .filter((n): n is typeof nodes[0] => n !== undefined);
+    const connectedTextNodes = resolveTextSourcesThroughRouters(directTextNodes, nodes, edges);
 
     const vars: AvailableVariable[] = [];
     const usedNames = new Set<string>();

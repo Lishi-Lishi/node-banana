@@ -18,6 +18,7 @@ import type {
   WorkflowNode,
 } from "@/types";
 import type { NodeExecutionContext } from "./types";
+import { resolveTextSourcesThroughRouters } from "@/store/utils/connectedInputs";
 import { parseTextToArray } from "@/utils/arrayParser";
 import { parseVarTags } from "@/utils/parseVarTags";
 
@@ -109,11 +110,12 @@ export async function executePromptConstructor(ctx: NodeExecutionContext): Promi
     const edges = getEdges();
     const nodes = getNodes();
 
-    // Find all connected text nodes
-    const connectedTextNodes = edges
+    // Find all connected text nodes (resolving through routers)
+    const directTextNodes = edges
       .filter((e) => e.target === node.id && e.targetHandle === "text")
       .map((e) => nodes.find((n) => n.id === e.source))
       .filter((n): n is WorkflowNode => n !== undefined);
+    const connectedTextNodes = resolveTextSourcesThroughRouters(directTextNodes, nodes, edges);
 
     // Build variable map: named variables from Prompt nodes take precedence
     const variableMap: Record<string, string> = {};

@@ -178,6 +178,7 @@ export interface NanoBananaNodeData extends BaseNodeData {
   parameters?: Record<string, unknown>; // Model-specific parameters for external providers
   inputSchema?: ModelInputDef[]; // Model's input schema for dynamic handles
   parametersExpanded?: boolean; // Collapse state for inline parameter display
+  _settingsPanelHeight?: number; // Measured settings panel height for reload correction
   status: NodeStatus;
   error: string | null;
   imageHistory: CarouselImageItem[]; // Carousel history (IDs only)
@@ -197,6 +198,7 @@ export interface GenerateVideoNodeData extends BaseNodeData {
   parameters?: Record<string, unknown>; // Model-specific parameters
   inputSchema?: ModelInputDef[]; // Model's input schema for dynamic handles
   parametersExpanded?: boolean; // Collapse state for inline parameter display
+  _settingsPanelHeight?: number; // Measured settings panel height for reload correction
   status: NodeStatus;
   error: string | null;
   videoHistory: CarouselVideoItem[]; // Carousel history (IDs only)
@@ -217,6 +219,7 @@ export interface Generate3DNodeData extends BaseNodeData {
   parameters?: Record<string, unknown>;
   inputSchema?: ModelInputDef[];
   parametersExpanded?: boolean; // Collapse state for inline parameter display
+  _settingsPanelHeight?: number; // Measured settings panel height for reload correction
   status: NodeStatus;
   error: string | null;
 }
@@ -242,6 +245,7 @@ export interface GenerateAudioNodeData extends BaseNodeData {
   parameters?: Record<string, unknown>; // Model-specific parameters (voice, speed, etc.)
   inputSchema?: ModelInputDef[]; // Model's input schema for dynamic handles
   parametersExpanded?: boolean; // Collapse state for inline parameter display
+  _settingsPanelHeight?: number; // Measured settings panel height for reload correction
   status: NodeStatus;
   error: string | null;
   audioHistory: CarouselAudioItem[]; // Carousel history (IDs only)
@@ -263,6 +267,7 @@ export interface LLMGenerateNodeData extends BaseNodeData {
   temperature: number;
   maxTokens: number;
   parametersExpanded?: boolean; // Collapse state for inline parameter display
+  _settingsPanelHeight?: number; // Measured settings panel height for reload correction
   status: NodeStatus;
   error: string | null;
 }

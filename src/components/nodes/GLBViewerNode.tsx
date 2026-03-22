@@ -361,7 +361,7 @@ export function GLBViewerNode({ id, data, selected }: NodeProps<GLBViewerNodeTyp
     <BaseNode
       id={id}
       selected={selected}
-      contentClassName={nodeData.glbUrl ? "flex-1 min-h-0 overflow-hidden flex flex-col" : undefined}
+      contentClassName={nodeData.glbUrl ? "flex-1 min-h-0 flex flex-col" : undefined}
       aspectFitMedia={nodeData.capturedImage}
     >
       <input

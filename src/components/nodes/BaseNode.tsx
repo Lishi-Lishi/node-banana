@@ -108,7 +108,10 @@ export function BaseNode({
           if (node.id !== id) return node;
           const currentHeight = getNodeDimension(node, "height");
           const newHeight = Math.max(minHeight, currentHeight - heightToRemove);
-          return applyNodeDimensions(node, getNodeDimension(node, "width"), newHeight);
+          return {
+            ...applyNodeDimensions(node, getNodeDimension(node, "width"), newHeight),
+            data: { ...node.data, _settingsPanelHeight: 0 },
+          };
         })
       );
 
@@ -134,14 +137,24 @@ export function BaseNode({
       animationTimeoutRef.current = setTimeout(() => {
         isAnimatingRef.current = false;
 
-        // Apply the final panel height in one shot, then unlock the wrapper
+        // Apply the final panel height in one shot, then unlock the wrapper.
+        // Subtract any previously saved panel height to avoid double-counting
+        // on workflow reload (saved node height already includes panel).
         const finalHeight = trackedSettingsHeightRef.current;
         if (finalHeight > 0) {
           setNodes((nodes) =>
             nodes.map((node) => {
               if (node.id !== id) return node;
+              const savedPanelHeight = typeof (node.data as Record<string, unknown>)?._settingsPanelHeight === "number"
+                ? (node.data as Record<string, unknown>)._settingsPanelHeight as number
+                : 0;
+              const heightToAdd = finalHeight - savedPanelHeight;
               const currentHeight = getNodeDimension(node, "height");
-              return applyNodeDimensions(node, getNodeDimension(node, "width"), currentHeight + finalHeight);
+              const newHeight = Math.max(minHeight, currentHeight + heightToAdd);
+              return {
+                ...applyNodeDimensions(node, getNodeDimension(node, "width"), newHeight),
+                data: { ...node.data, _settingsPanelHeight: finalHeight },
+              };
             })
           );
         }
@@ -188,7 +201,10 @@ export function BaseNode({
             if (node.id !== id) return node;
             const currentHeight = getNodeDimension(node, "height");
             const newHeight = Math.max(minHeight, currentHeight + delta);
-            return applyNodeDimensions(node, getNodeDimension(node, "width"), newHeight);
+            return {
+              ...applyNodeDimensions(node, getNodeDimension(node, "width"), newHeight),
+              data: { ...node.data, _settingsPanelHeight: newPanelHeight },
+            };
           })
         );
 
@@ -305,7 +321,7 @@ export function BaseNode({
           setHoveredNodeId(null);
         }}
       >
-        <div ref={contentRef} style={{ contain: "layout style" }} className={contentClassName ?? (fullBleed ? "flex-1 min-h-0 relative" : "px-3 pb-4 flex-1 min-h-0 overflow-hidden flex flex-col")}>{children}</div>
+        <div ref={contentRef} style={{ contain: "layout style" }} className={contentClassName ?? (fullBleed ? "flex-1 min-h-0 relative" : "px-3 pb-4 flex-1 min-h-0 overflow-visible flex flex-col")}>{children}</div>
       </div>
       {settingsPanel && (
         <div ref={settingsPanelRef}>
