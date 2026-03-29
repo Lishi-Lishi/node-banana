@@ -4,6 +4,8 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { logger } from "@/utils/logger";
 
+export const maxDuration = 300; // 5 minute timeout for large media operations
+
 // Helper to get file extension from MIME type
 function getExtensionFromMime(mimeType: string): string {
   const mimeToExt: Record<string, string> = {

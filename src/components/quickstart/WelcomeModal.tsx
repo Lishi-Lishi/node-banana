@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { WorkflowFile } from "@/store/workflowStore";
 import { QuickstartView } from "@/types/quickstart";
 import { QuickstartInitialView } from "./QuickstartInitialView";
 import { TemplateExplorerView } from "./TemplateExplorerView";
 import { PromptWorkflowView } from "./PromptWorkflowView";
+import { WorkflowBrowserView } from "./WorkflowBrowserView";
 
 interface WelcomeModalProps {
-  onWorkflowGenerated: (workflow: WorkflowFile) => void;
+  onWorkflowGenerated: (workflow: WorkflowFile, directoryPath?: string) => void;
   onClose: () => void;
   onNewProject: () => void;
 }
@@ -19,7 +20,6 @@ export function WelcomeModal({
   onNewProject,
 }: WelcomeModalProps) {
   const [currentView, setCurrentView] = useState<QuickstartView>("initial");
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleNewProject = useCallback(() => {
     onNewProject();
@@ -34,36 +34,8 @@ export function WelcomeModal({
   }, []);
 
   const handleSelectLoad = useCallback(() => {
-    fileInputRef.current?.click();
+    setCurrentView("browse");
   }, []);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const workflow = JSON.parse(
-            event.target?.result as string
-          ) as WorkflowFile;
-          if (workflow.version && workflow.nodes && workflow.edges) {
-            onWorkflowGenerated(workflow);
-          } else {
-            alert("Invalid workflow file format");
-          }
-        } catch {
-          alert("Failed to parse workflow file");
-        }
-      };
-      reader.readAsText(file);
-
-      // Reset input so same file can be loaded again
-      e.target.value = "";
-    },
-    [onWorkflowGenerated]
-  );
 
   const handleBack = useCallback(() => {
     setCurrentView("initial");
@@ -78,7 +50,7 @@ export function WelcomeModal({
 
   // Template explorer needs more width for two-column layout
   const dialogWidth = currentView === "templates" ? "max-w-6xl" : "max-w-2xl";
-  const dialogHeight = currentView === "templates" ? "max-h-[85vh]" : "max-h-[80vh]";
+  const dialogHeight = currentView === "templates" || currentView === "browse" ? "max-h-[85vh]" : "max-h-[80vh]";
 
   return (
     <div
@@ -107,14 +79,15 @@ export function WelcomeModal({
             onWorkflowGenerated={handleWorkflowSelected}
           />
         )}
-        {/* Hidden file input for loading workflows */}
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileChange}
-          accept=".json"
-          className="hidden"
-        />
+        {currentView === "browse" && (
+          <WorkflowBrowserView
+            onBack={handleBack}
+            onWorkflowLoaded={(workflow, dirPath) =>
+              onWorkflowGenerated(workflow, dirPath)
+            }
+            onClose={onClose}
+          />
+        )}
       </div>
     </div>
   );

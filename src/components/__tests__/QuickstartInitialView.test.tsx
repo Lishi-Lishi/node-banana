@@ -42,7 +42,7 @@ describe("QuickstartInitialView", () => {
       );
 
       expect(
-        screen.getByText(/node based workflow editor for AI image generation/i)
+        screen.getByText(/node based workflow editor for generative AI pipelines/i)
       ).toBeInTheDocument();
     });
 

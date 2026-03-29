@@ -24,6 +24,13 @@ vi.mock("@/components/ProjectSetupModal", () => ({
   ),
 }));
 
+// Mock WorkflowBrowserModal
+vi.mock("@/components/WorkflowBrowserModal", () => ({
+  WorkflowBrowserModal: ({ isOpen }: { isOpen: boolean }) => (
+    isOpen ? <div data-testid="workflow-browser-modal">Workflow Browser</div> : null
+  ),
+}));
+
 // Mock CostIndicator
 vi.mock("@/components/CostIndicator", () => ({
   CostIndicator: () => <div data-testid="cost-indicator">$0.00</div>,
@@ -250,24 +257,12 @@ describe("Header", () => {
       expect(openButton).toBeInTheDocument();
     });
 
-    it("should have hidden file input for loading workflows", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]');
-      expect(fileInput).toBeInTheDocument();
-      expect(fileInput).toHaveAttribute("accept", ".json");
-      expect(fileInput).toHaveClass("hidden");
-    });
-
-    it("should trigger file input click when open button is clicked", () => {
-      const { container } = render(<Header />);
+    it("should open WorkflowBrowserModal when open button is clicked", () => {
+      render(<Header />);
       const openButton = screen.getByTitle("Open project");
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // Mock click on file input
-      const clickSpy = vi.spyOn(fileInput, "click");
       fireEvent.click(openButton);
 
-      expect(clickSpy).toHaveBeenCalled();
+      expect(screen.getByTestId("workflow-browser-modal")).toBeInTheDocument();
     });
   });
 
@@ -402,26 +397,6 @@ describe("Header", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: "/path/to/project" }),
       });
-    });
-  });
-
-  describe("File Loading", () => {
-    it("should not call loadWorkflow when no file is selected", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // Trigger file change with empty files
-      fireEvent.change(fileInput, { target: { files: [] } });
-
-      expect(mockLoadWorkflow).not.toHaveBeenCalled();
-    });
-
-    it("should reset file input value after file selection to allow re-selecting same file", () => {
-      const { container } = render(<Header />);
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-
-      // File input should accept .json files
-      expect(fileInput).toHaveAttribute("accept", ".json");
     });
   });
 

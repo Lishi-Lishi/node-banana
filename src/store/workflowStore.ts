@@ -28,7 +28,7 @@ import {
 } from "@/types";
 import { useToast } from "@/components/Toast";
 import { logger } from "@/utils/logger";
-import { externalizeWorkflowImages, hydrateWorkflowImages } from "@/utils/imageStorage";
+import { externalizeWorkflowMedia, hydrateWorkflowMedia } from "@/utils/mediaStorage";
 import { EditOperation, applyEditOperations as executeEditOps } from "@/lib/chat/editOperations";
 import {
   loadSaveConfigs,
@@ -373,6 +373,9 @@ interface WorkflowStore {
   // Switch dimming state
   dimmedNodeIds: Set<string>;
 
+  // Skip propagation state (optional empty inputs)
+  skippedNodeIds: Set<string>;
+
   // Switch dimming actions
   recomputeDimmedNodes: () => void;
 
@@ -506,6 +509,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
   // Switch dimming initial state
   dimmedNodeIds: new Set<string>(),
+
+  // Skip propagation initial state
+  skippedNodeIds: new Set<string>(),
 
   setEdgeStyle: (style: EdgeStyle) => {
     set({ edgeStyle: style });
@@ -998,7 +1004,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // Create AbortController for this execution run
     const abortController = new AbortController();
     const isResuming = startFromNodeId === get().pausedAtNodeId;
-    set({ isRunning: true, pausedAtNodeId: null, currentNodeIds: [], _abortController: abortController });
+    const resetSkippedNodes = () => {
+      for (const skippedId of get().skippedNodeIds) {
+        const skippedNode = get().nodes.find((n) => n.id === skippedId);
+        if (skippedNode && (skippedNode.data as Record<string, unknown>).status !== undefined) {
+          get().updateNodeData(skippedId, { status: "idle" } as Partial<WorkflowNodeData>);
+        }
+      }
+    };
+    set({ isRunning: true, pausedAtNodeId: null, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: abortController });
 
     // Start logging session
     await logger.startSession();
@@ -1069,6 +1083,38 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           groupName: nodeGroup.name,
         });
         return; // Skip this node but continue with others
+      }
+
+      // Check 1: Optional input node with no data → skip this node
+      const nodeData = node.data as Record<string, unknown>;
+      if (nodeData.isOptional) {
+        const isEmpty =
+          (node.type === "imageInput" && !nodeData.image) ||
+          (node.type === "audioInput" && !nodeData.audioFile) ||
+          (node.type === "prompt" && !(nodeData.prompt as string)?.trim());
+        if (isEmpty) {
+          set({ skippedNodeIds: new Set([...get().skippedNodeIds, node.id]) });
+          logger.info('node.execution', 'Node skipped (optional input empty)', {
+            nodeId: node.id,
+            nodeType: node.type,
+          });
+          return;
+        }
+      }
+
+      // Check 2: Any source node is skipped → propagate skip
+      const incomingEdgesForSkip = edges.filter((e) => e.target === node.id);
+      const hasSkippedSource = incomingEdgesForSkip.some((e) => get().skippedNodeIds.has(e.source));
+      if (hasSkippedSource) {
+        set({ skippedNodeIds: new Set([...get().skippedNodeIds, node.id]) });
+        if (nodeData.status !== undefined) {
+          get().updateNodeData(node.id, { status: "skipped" } as Partial<WorkflowNodeData>);
+        }
+        logger.info('node.execution', 'Node skipped (upstream source skipped)', {
+          nodeId: node.id,
+          nodeType: node.type,
+        });
+        return;
       }
 
       logger.info('node.execution', `Executing ${node.type} node`, {
@@ -1214,7 +1260,10 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         logger.info('workflow.end', 'Workflow execution completed successfully');
       }
 
-      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+      // Reset skipped nodes' status back to idle
+      resetSkippedNodes();
+
+      set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
       saveLogSession();
       await logger.endSession();
@@ -1230,7 +1279,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           "error"
         );
       }
-      set({ isRunning: false, currentNodeIds: [], _abortController: null });
+      // Reset skipped nodes' status back to idle
+      resetSkippedNodes();
+      set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
       saveLogSession();
       await logger.endSession();
@@ -1243,7 +1294,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     if (controller) {
       controller.abort("user-cancelled");
     }
-    set({ isRunning: false, currentNodeIds: [], _abortController: null });
+    set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
   },
 
   setMaxConcurrentCalls: (value: number) => {
@@ -1698,13 +1749,13 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // Determine the workflow directory path (passed in, from saved config, or embedded in legacy workflow JSON)
     const directoryPath = workflowPath || savedConfig?.directoryPath || workflow.directoryPath || null;
 
-    // Hydrate images if we have a directory path and the workflow has image refs
+    // Hydrate media if we have a directory path and the workflow has media refs
     let hydratedWorkflow = workflow;
     if (directoryPath) {
       try {
-        hydratedWorkflow = await hydrateWorkflowImages(workflow, directoryPath);
+        hydratedWorkflow = await hydrateWorkflowMedia(workflow, directoryPath);
       } catch (error) {
-        console.error("Failed to hydrate workflow images:", error);
+        console.error("Failed to hydrate workflow media:", error);
         // Continue with original workflow if hydration fails
       }
     }
@@ -1778,6 +1829,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       viewedCommentNodeIds: new Set<string>(),
       // Reset dimmed nodes
       dimmedNodeIds: new Set<string>(),
+      // Reset skipped nodes
+      skippedNodeIds: new Set<string>(),
     });
     get().clearSnapshot();
   },
@@ -1898,15 +1951,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         version: 1,
         id: workflowId,
         name: workflowName,
+        directoryPath: saveDirectoryPath,
         nodes: currentNodes,
         edges,
         edgeStyle,
         groups: groups && Object.keys(groups).length > 0 ? groups : undefined,
       };
 
-      // If external image storage is enabled, externalize images before saving
+      // If external media storage is enabled, externalize media before saving
       if (useExternalImageStorage) {
-        workflow = await externalizeWorkflowImages(workflow, saveDirectoryPath);
+        workflow = await externalizeWorkflowMedia(workflow, saveDirectoryPath);
       }
 
       const response = await fetch("/api/workflow", {
@@ -1924,22 +1978,23 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       if (result.success) {
         const timestamp = Date.now();
 
-        // If we externalized images, update store nodes with the refs
-        // This prevents duplicate images on subsequent saves
+        // If we externalized media, update store nodes with the refs
+        // This prevents duplicate media on subsequent saves
         if (useExternalImageStorage && workflow.nodes !== currentNodes) {
-          // Merge refs from externalized nodes into current nodes (keeping image data)
+          // Merge refs from externalized nodes into current nodes (keeping media data)
           const nodesWithRefs = currentNodes.map((node, index) => {
             const externalizedNode = workflow.nodes[index];
             if (!externalizedNode || node.id !== externalizedNode.id) {
               return node; // Safety check - nodes should match
             }
 
-            // Copy refs from externalized node while keeping current image data
+            // Copy refs from externalized node while keeping current media data
             // Use type assertion to access ref fields that may exist on various node types
             const mergedData = { ...node.data } as Record<string, unknown>;
             const extData = externalizedNode.data as Record<string, unknown>;
 
             // Copy ref fields based on node type
+            // Image refs
             if (extData.imageRef && typeof extData.imageRef === 'string') {
               mergedData.imageRef = extData.imageRef;
             }
@@ -1951,6 +2006,26 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
             }
             if (extData.inputImageRefs && Array.isArray(extData.inputImageRefs)) {
               mergedData.inputImageRefs = extData.inputImageRefs;
+            }
+            if (extData.imageARef && typeof extData.imageARef === 'string') {
+              mergedData.imageARef = extData.imageARef;
+            }
+            if (extData.imageBRef && typeof extData.imageBRef === 'string') {
+              mergedData.imageBRef = extData.imageBRef;
+            }
+            if (extData.capturedImageRef && typeof extData.capturedImageRef === 'string') {
+              mergedData.capturedImageRef = extData.capturedImageRef;
+            }
+            // Video refs
+            if (extData.outputVideoRef && typeof extData.outputVideoRef === 'string') {
+              mergedData.outputVideoRef = extData.outputVideoRef;
+            }
+            // Audio refs
+            if (extData.audioFileRef && typeof extData.audioFileRef === 'string') {
+              mergedData.audioFileRef = extData.audioFileRef;
+            }
+            if (extData.outputAudioRef && typeof extData.outputAudioRef === 'string') {
+              mergedData.outputAudioRef = extData.outputAudioRef;
             }
 
             return { ...node, data: mergedData as WorkflowNodeData } as WorkflowNode;

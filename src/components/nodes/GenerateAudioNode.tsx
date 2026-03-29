@@ -160,6 +160,8 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
       updateNodeData(id, {
         outputAudio: audio,
         selectedAudioHistoryIndex: newIndex,
+        status: "idle",
+        error: null,
       });
     }
   }, [id, nodeData.audioHistory, nodeData.selectedAudioHistoryIndex, isLoadingCarouselAudio, loadAudioById, updateNodeData]);
@@ -180,6 +182,8 @@ export function GenerateAudioNode({ id, data, selected }: NodeProps<GenerateAudi
       updateNodeData(id, {
         outputAudio: audio,
         selectedAudioHistoryIndex: newIndex,
+        status: "idle",
+        error: null,
       });
     }
   }, [id, nodeData.audioHistory, nodeData.selectedAudioHistoryIndex, isLoadingCarouselAudio, loadAudioById, updateNodeData]);

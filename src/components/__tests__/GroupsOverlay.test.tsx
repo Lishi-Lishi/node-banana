@@ -203,7 +203,7 @@ describe("GroupControlsOverlay", () => {
       expect(screen.getByText("My Test Group")).toBeInTheDocument();
     });
 
-    it("should render color picker button", () => {
+    it("should render group options menu button", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup() },
@@ -211,11 +211,10 @@ describe("GroupControlsOverlay", () => {
       });
 
       render(<GroupControlsOverlay />);
-      const colorButton = screen.getByTitle("Change color");
-      expect(colorButton).toBeInTheDocument();
+      expect(screen.getByTitle("Group options")).toBeInTheDocument();
     });
 
-    it("should render lock/unlock button", () => {
+    it("should show menu items when group options button is clicked", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup({ locked: false }) },
@@ -223,20 +222,12 @@ describe("GroupControlsOverlay", () => {
       });
 
       render(<GroupControlsOverlay />);
-      const lockButton = screen.getByTitle("Lock group");
-      expect(lockButton).toBeInTheDocument();
-    });
+      fireEvent.click(screen.getByTitle("Group options"));
 
-    it("should render delete button", () => {
-      mockUseWorkflowStore.mockImplementation((selector) => {
-        return selector(createDefaultState({
-          groups: { "group-1": createMockGroup() },
-        }));
-      });
-
-      render(<GroupControlsOverlay />);
-      const deleteButton = screen.getByTitle("Delete group");
-      expect(deleteButton).toBeInTheDocument();
+      expect(screen.getByText("Background")).toBeInTheDocument();
+      expect(screen.getByText("Lock")).toBeInTheDocument();
+      expect(screen.getByText("NBP Input")).toBeInTheDocument();
+      expect(screen.getByText("Delete")).toBeInTheDocument();
     });
   });
 
@@ -321,7 +312,7 @@ describe("GroupControlsOverlay", () => {
   });
 
   describe("Lock Toggle", () => {
-    it("should show unlock button when group is locked", () => {
+    it("should show Unlock label in menu when group is locked", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup({ locked: true }) },
@@ -329,10 +320,11 @@ describe("GroupControlsOverlay", () => {
       });
 
       render(<GroupControlsOverlay />);
-      expect(screen.getByTitle("Unlock group")).toBeInTheDocument();
+      fireEvent.click(screen.getByTitle("Group options"));
+      expect(screen.getByText("Unlock")).toBeInTheDocument();
     });
 
-    it("should call toggleGroupLock when lock button is clicked", () => {
+    it("should call toggleGroupLock when Lock is clicked in menu", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup({ locked: false }) },
@@ -340,14 +332,14 @@ describe("GroupControlsOverlay", () => {
       });
 
       render(<GroupControlsOverlay />);
-
-      fireEvent.click(screen.getByTitle("Lock group"));
+      fireEvent.click(screen.getByTitle("Group options"));
+      fireEvent.click(screen.getByText("Lock"));
       expect(mockToggleGroupLock).toHaveBeenCalledWith("group-1");
     });
   });
 
   describe("Color Picker", () => {
-    it("should show color picker when color button is clicked", () => {
+    it("should show color picker when Background is clicked in menu", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup({ color: "blue" }) },
@@ -356,7 +348,9 @@ describe("GroupControlsOverlay", () => {
 
       render(<GroupControlsOverlay />);
 
-      fireEvent.click(screen.getByTitle("Change color"));
+      // Open menu, then click Background to show color fan
+      fireEvent.click(screen.getByTitle("Group options"));
+      fireEvent.click(screen.getByText("Background"));
 
       // Should show color options (Gray, Blue, Green, Purple, Orange, Red)
       expect(screen.getByTitle("Gray")).toBeInTheDocument();
@@ -376,8 +370,9 @@ describe("GroupControlsOverlay", () => {
 
       render(<GroupControlsOverlay />);
 
-      // Open color picker
-      fireEvent.click(screen.getByTitle("Change color"));
+      // Open menu, then color picker
+      fireEvent.click(screen.getByTitle("Group options"));
+      fireEvent.click(screen.getByText("Background"));
 
       // Select green
       fireEvent.click(screen.getByTitle("Green"));
@@ -387,7 +382,7 @@ describe("GroupControlsOverlay", () => {
   });
 
   describe("Delete Group", () => {
-    it("should call deleteGroup when delete button is clicked", () => {
+    it("should call deleteGroup when Delete is clicked in menu", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {
         return selector(createDefaultState({
           groups: { "group-1": createMockGroup() },
@@ -396,7 +391,8 @@ describe("GroupControlsOverlay", () => {
 
       render(<GroupControlsOverlay />);
 
-      fireEvent.click(screen.getByTitle("Delete group"));
+      fireEvent.click(screen.getByTitle("Group options"));
+      fireEvent.click(screen.getByText("Delete"));
       expect(mockDeleteGroup).toHaveBeenCalledWith("group-1");
     });
   });

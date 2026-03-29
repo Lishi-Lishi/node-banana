@@ -28,7 +28,7 @@ export function QuickstartInitialView({
           </div>
 
           <p className="text-sm text-neutral-400 leading-relaxed mb-6">
-            A node based workflow editor for AI image generation. Connect nodes to build pipelines that transform and generate images.
+            A node based workflow editor for generative AI pipelines. Connect nodes to build pipelines that transform and generate images, video, audio and 3D assets.
           </p>
 
           <div className="flex flex-col gap-2.5 mt-auto">
