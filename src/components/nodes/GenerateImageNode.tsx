@@ -357,6 +357,8 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
       updateNodeData(id, {
         outputImage: image,
         selectedHistoryIndex: newIndex,
+        status: "idle",
+        error: null,
       });
     }
   }, [id, nodeData.imageHistory, nodeData.selectedHistoryIndex, isLoadingCarouselImage, loadImageById, updateNodeData]);
@@ -377,6 +379,8 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
       updateNodeData(id, {
         outputImage: image,
         selectedHistoryIndex: newIndex,
+        status: "idle",
+        error: null,
       });
     }
   }, [id, nodeData.imageHistory, nodeData.selectedHistoryIndex, isLoadingCarouselImage, loadImageById, updateNodeData]);

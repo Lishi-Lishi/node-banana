@@ -50,4 +50,5 @@ export interface NodeGroup {
   position: { x: number; y: number };
   size: { width: number; height: number };
   locked?: boolean;
+  isNbpInput?: boolean;
 }

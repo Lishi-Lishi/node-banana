@@ -4,10 +4,13 @@ import * as path from "path";
 import { logger } from "@/utils/logger";
 
 // Supported file extensions
-const SUPPORTED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov'];
+const SUPPORTED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'aac'];
 
 // Video extensions
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov'];
+
+// Audio extensions
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac'];
 
 // Extension to MIME type mapping
 const EXT_TO_MIME: Record<string, string> = {
@@ -19,6 +22,11 @@ const EXT_TO_MIME: Record<string, string> = {
   mp4: 'video/mp4',
   webm: 'video/webm',
   mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
 };
 
 // POST: Load a generated image or video from the generations folder by ID
@@ -108,7 +116,8 @@ export async function POST(request: NextRequest) {
 
     // Determine content type
     const isVideo = VIDEO_EXTENSIONS.includes(foundExtension);
-    const contentType = isVideo ? 'video' : 'image';
+    const isAudio = AUDIO_EXTENSIONS.includes(foundExtension);
+    const contentType = isVideo ? 'video' : isAudio ? 'audio' : 'image';
 
     logger.info('file.load', 'Generation loaded successfully', {
       filePath,
@@ -125,6 +134,8 @@ export async function POST(request: NextRequest) {
 
     if (isVideo) {
       response.video = dataUrl;
+    } else if (isAudio) {
+      response.audio = dataUrl;
     } else {
       response.image = dataUrl;
     }

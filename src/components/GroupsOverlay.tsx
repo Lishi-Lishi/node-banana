@@ -46,7 +46,7 @@ function GroupBackground({ groupId }: GroupBackgroundProps) {
         width: group.size.width,
         height: group.size.height,
         backgroundColor: `${bgColor}60`,
-        border: `1px solid ${bgColor}`,
+        border: group.isNbpInput ? `3px dashed rgba(255,255,255,0.25)` : `1px solid ${bgColor}`,
         pointerEvents: "none",
       }}
     />
@@ -66,6 +66,7 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(group?.name || "");
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [resizeHandle, setResizeHandle] = useState<string | null>(null);
@@ -73,6 +74,14 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
   const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number; posX: number; posY: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const colorPickerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Reset color picker when menu closes
+  useEffect(() => {
+    if (!showMenu) {
+      setShowColorPicker(false);
+    }
+  }, [showMenu]);
 
   useEffect(() => {
     if (group?.name && !isEditing) {
@@ -92,13 +101,16 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
       if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
         setShowColorPicker(false);
       }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
     };
 
-    if (showColorPicker) {
+    if (showColorPicker || showMenu) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showColorPicker]);
+  }, [showColorPicker, showMenu]);
 
   const handleNameSubmit = useCallback(() => {
     if (editName.trim() && editName !== group?.name) {
@@ -279,7 +291,7 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
         overflow: "visible",
       }}
     >
-      {/* Floating group name label - top-left, viewport-scaled */}
+      {/* Group title label + three-dot menu - top-left, viewport-scaled */}
       {/* Outer wrapper: zero-height anchor at the top edge of the group */}
       <div
         className="absolute left-0"
@@ -287,6 +299,7 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
       >
         {/* Inner scaled element: bottom-anchored so it grows upward, scale keeps bottom-left fixed */}
         <div
+          ref={menuRef}
           className="absolute left-0 pointer-events-auto cursor-grab active:cursor-grabbing select-none"
           style={{
             bottom: 0,
@@ -297,139 +310,177 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
           onMouseDown={handleHeaderMouseDown}
         >
           <div
-            className="flex items-center rounded-md px-2 py-0.5 mb-1"
-            style={{ backgroundColor: bgColor }}
+            className="flex items-center gap-0.5 mb-1"
           >
-            {isEditing ? (
-              <input
-                ref={inputRef}
-                type="text"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onBlur={handleNameSubmit}
-                onKeyDown={handleKeyDown}
-                className="bg-transparent border-none outline-none text-xs font-medium text-white px-0 py-0"
-                style={{ minWidth: 60, maxWidth: 200, width: `${Math.max(60, editName.length * 7)}px` }}
-              />
-            ) : (
-              <span
-                className="text-xs font-medium text-white truncate"
-                style={{ maxWidth: 200 }}
-                onDoubleClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
-              >
-                {group.name}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Floating controls - top-right, scales naturally with canvas zoom */}
-      <div
-        className="absolute right-0 pointer-events-auto"
-        style={{
-          top: -28,
-        }}
-      >
-        <div className="flex items-center gap-1 px-1.5 py-0.5">
-          {/* Color Picker */}
-          <div className="relative flex items-center" ref={colorPickerRef}>
-            <button
-              onClick={() => setShowColorPicker(!showColorPicker)}
-              className="w-4 h-4 rounded border border-white/30 hover:border-white/60 transition-colors"
+            {/* Title pill */}
+            <div
+              className="flex items-center rounded-md px-2 py-0.5"
               style={{ backgroundColor: bgColor }}
-              title="Change color"
-            />
-            {showColorPicker && (
-              <>
-                {/* Invisible backdrop to catch clicks outside */}
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowColorPicker(false)}
+            >
+              {group.locked && (
+                <svg className="w-3 h-3 text-white/70 mr-1 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              )}
+              {isEditing ? (
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={handleNameSubmit}
+                  onKeyDown={handleKeyDown}
+                  className="bg-transparent border-none outline-none text-xs font-medium text-white px-0 py-0"
+                  style={{ minWidth: 60, maxWidth: 200, width: `${Math.max(60, editName.length * 7)}px` }}
                 />
-                <div className="absolute bottom-full left-1/2 mb-2 z-50 pointer-events-auto" style={{ transform: "translateX(-50%)" }}>
-                  {COLOR_OPTIONS.map(({ color, label }, index) => {
-                    // Fan out in an arc above the button
-                    const totalItems = COLOR_OPTIONS.length;
-                    const arcSpread = 180; // degrees of arc spread (wider)
-                    const startAngle = -90 - arcSpread / 2; // start from top-left
-                    const angleStep = arcSpread / (totalItems - 1);
-                    const angle = startAngle + index * angleStep;
-                    const radius = 55; // distance from center (larger)
-                    const rad = (angle * Math.PI) / 180;
-                    const x = Math.cos(rad) * radius;
-                    const y = Math.sin(rad) * radius;
-                    const finalX = x - 12;
-                    const finalY = y - 12;
+              ) : (
+                <span
+                  className="text-xs font-medium text-white truncate"
+                  style={{ maxWidth: 200 }}
+                  onDoubleClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+                >
+                  {group.name}
+                </span>
+              )}
+            </div>
 
-                    return (
-                      <button
-                        key={color}
-                        onClick={() => handleColorChange(color)}
-                        className={`absolute w-6 h-6 rounded-full border-2 transition-[transform,border-color] duration-150 hover:scale-110 ${
-                          group.color === color
-                            ? "border-white"
-                            : "border-transparent hover:border-white/50"
-                        }`}
-                        style={{
-                          backgroundColor: PICKER_PREVIEW_COLORS[color],
-                          transform: `translate(${finalX}px, ${finalY}px)`,
-                          animation: `colorFanIn-${index} 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards`,
-                          animationDelay: `${index * 0.025}s`,
-                          opacity: 0,
-                          // Use CSS custom properties to pass the final position to the animation
-                          ["--final-x" as string]: `${finalX}px`,
-                          ["--final-y" as string]: `${finalY}px`,
-                        }}
-                        title={label}
-                      >
-                        <style>{`
-                          @keyframes colorFanIn-${index} {
-                            0% {
-                              opacity: 0;
-                              transform: translate(-12px, 0px) scale(0.3);
-                            }
-                            100% {
-                              opacity: 1;
-                              transform: translate(${finalX}px, ${finalY}px) scale(1);
-                            }
-                          }
-                        `}</style>
-                      </button>
-                    );
-                  })}
+            {/* Three-dot menu toggle - always visible */}
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+                className="w-6 h-6 rounded-md flex flex-col items-center justify-center gap-[2px] hover:bg-white/20 transition-colors"
+                title="Group options"
+              >
+                <div className="w-[3px] h-[3px] rounded-full bg-white/70" />
+                <div className="w-[3px] h-[3px] rounded-full bg-white/70" />
+                <div className="w-[3px] h-[3px] rounded-full bg-white/70" />
+              </button>
+
+              {/* Vertical context menu - appears above the three-dot button */}
+              {showMenu && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-neutral-800/90 backdrop-blur rounded-lg py-1 min-w-[130px] shadow-lg shadow-black/30" ref={colorPickerRef}>
+                  {/* Color fan - anchored to top-left corner of menu */}
+                  {showColorPicker && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setShowColorPicker(false)}
+                      />
+                      <div className="absolute top-0 left-0 z-50 pointer-events-auto">
+                        {COLOR_OPTIONS.map(({ color, label }, index) => {
+                          const totalItems = COLOR_OPTIONS.length;
+                          const arcSpread = 180;
+                          const startAngle = -130 - arcSpread / 2;
+                          const angleStep = arcSpread / (totalItems - 1);
+                          const angle = startAngle + index * angleStep;
+                          const radius = 55;
+                          const rad = (angle * Math.PI) / 180;
+                          const x = Math.cos(rad) * radius;
+                          const y = Math.sin(rad) * radius;
+                          const finalX = x;
+                          const finalY = y;
+
+                          return (
+                            <button
+                              key={color}
+                              onClick={() => handleColorChange(color)}
+                              className={`absolute w-6 h-6 rounded-full border-2 transition-[transform,border-color] duration-150 hover:scale-125 ${
+                                group.color === color
+                                  ? "border-white"
+                                  : "border-transparent hover:border-white/50"
+                              }`}
+                              style={{
+                                backgroundColor: PICKER_PREVIEW_COLORS[color],
+                                left: finalX - 12,
+                                top: finalY - 12,
+                                animation: `colorFanIn-${index} 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards`,
+                                animationDelay: `${index * 0.025}s`,
+                                opacity: 0,
+                              }}
+                              title={label}
+                            >
+                              <style>{`
+                                @keyframes colorFanIn-${index} {
+                                  0% {
+                                    opacity: 0;
+                                    left: -12px;
+                                    top: -12px;
+                                    transform: scale(0.3);
+                                  }
+                                  100% {
+                                    opacity: 1;
+                                    left: ${finalX - 12}px;
+                                    top: ${finalY - 12}px;
+                                    transform: scale(1);
+                                  }
+                                }
+                              `}</style>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Background color row */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowColorPicker(!showColorPicker); }}
+                    className="flex items-center gap-2 px-3 py-1.5 w-full hover:bg-white/10 text-xs text-white/80 transition-colors"
+                  >
+                    <div
+                      className="w-3 h-3 rounded-full border border-white/30"
+                      style={{ backgroundColor: bgColor }}
+                    />
+                    <span>Background</span>
+                  </button>
+
+                  {/* Lock/Unlock row */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleToggleLock(); setShowMenu(false); }}
+                    className="flex items-center gap-2 px-3 py-1.5 w-full hover:bg-white/10 text-xs text-white/80 transition-colors"
+                  >
+                    {group.locked ? (
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                    <span>{group.locked ? "Unlock" : "Lock"}</span>
+                  </button>
+
+                  {/* NBP Input toggle row */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); updateGroup(groupId, { isNbpInput: !group.isNbpInput }); setShowMenu(false); }}
+                    className="flex items-center gap-2 px-3 py-1.5 w-full hover:bg-white/10 text-xs text-white/80 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                    </svg>
+                    <span>NBP Input</span>
+                    {group.isNbpInput && (
+                      <svg className="w-3 h-3 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+
+                  {/* Delete row */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(); }}
+                    className="flex items-center gap-2 px-3 py-1.5 w-full hover:bg-white/10 text-xs text-white/80 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span>Delete</span>
+                  </button>
                 </div>
-              </>
-            )}
+              )}
+            </div>
           </div>
-
-          {/* Lock/Unlock Button */}
-          <button
-            onClick={handleToggleLock}
-            className="p-0.5 rounded hover:bg-white/20 text-white/70 hover:text-white transition-colors"
-            title={group.locked ? "Unlock group" : "Lock group"}
-          >
-            {group.locked ? (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-              </svg>
-            )}
-          </button>
-
-          {/* Delete Button */}
-          <button
-            onClick={handleDelete}
-            className="p-0.5 rounded hover:bg-white/20 text-white/70 hover:text-white transition-colors"
-            title="Delete group"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
         </div>
       </div>
 

@@ -68,7 +68,13 @@ body {
   transition: opacity 250ms ease-in-out;
 }
 
-.react-flow__node:not(.switch-dimmed) {
+/* Skip dimming - nodes skipped due to optional empty inputs */
+.react-flow__node.node-skipped {
+  opacity: 0.35;
+  transition: opacity 250ms ease-in-out;
+}
+
+.react-flow__node:not(.switch-dimmed):not(.node-skipped) {
   transition: opacity 250ms ease-in-out;
 }
 
