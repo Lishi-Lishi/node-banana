@@ -396,7 +396,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
           nodeId={id}
         >
           {/* External provider parameters - reuse ModelParameters component */}
-          {nodeData.selectedModel?.modelId && !isVeoModel(nodeData.selectedModel.modelId) && (
+          {nodeData.selectedModel?.modelId && (
             <ModelParameters
               modelId={nodeData.selectedModel.modelId}
               provider={currentProvider}
@@ -779,7 +779,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
     </BaseNode>
 
     {/* Hidden ModelParameters — only for schema-loading side effect (dynamic handles) when inline disabled */}
-    {!inlineParametersEnabled && nodeData.selectedModel?.modelId && !isVeoModel(nodeData.selectedModel.modelId) && (
+    {!inlineParametersEnabled && nodeData.selectedModel?.modelId && (
       <div className="hidden">
         <ModelParameters
           modelId={nodeData.selectedModel.modelId}

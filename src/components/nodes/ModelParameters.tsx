@@ -82,9 +82,11 @@ function ModelParametersInner({
   // Use stable selector for API keys to prevent unnecessary re-fetches
   const { replicateApiKey, falApiKey, kieApiKey, wavespeedApiKey } = useProviderApiKeys();
 
+  const isVeoModel = modelId?.startsWith("veo-");
+
   // Fetch schema when modelId changes
   useEffect(() => {
-    if (!modelId || provider === "gemini") {
+    if (!modelId || (provider === "gemini" && !isVeoModel)) {
       setSchema([]);
       onInputsLoaded?.([]);
       return;
@@ -217,8 +219,8 @@ function ModelParametersInner({
       : sortedSchema;
   }, [sortedSchema, useGrid, colCount]);
 
-  // Don't render anything for Gemini or if no model selected
-  if (provider === "gemini" || !modelId) {
+  // Don't render anything for Gemini (except Veo) or if no model selected
+  if ((provider === "gemini" && !isVeoModel) || !modelId) {
     return null;
   }
 

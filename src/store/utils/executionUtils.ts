@@ -129,11 +129,12 @@ export function clearNodeImageRefs(nodes: WorkflowNode[]): WorkflowNode[] {
     revokeBlobUrl(data.outputVideo as string | undefined);
     revokeBlobUrl(data.glbUrl as string | undefined);
 
-    // Clear all ref fields regardless of node type
-    delete data.imageRef;
-    delete data.sourceImageRef;
-    delete data.outputImageRef;
-    delete data.inputImageRefs;
+    // Clear all ref fields regardless of node type (match any key ending in Ref or Refs)
+    for (const key of Object.keys(data)) {
+      if (/Refs?$/.test(key)) {
+        delete data[key];
+      }
+    }
 
     return { ...node, data: data as WorkflowNodeData } as WorkflowNode;
   });

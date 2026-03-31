@@ -158,6 +158,20 @@ async function externalizeNodeMedia(
       break;
     }
 
+    case "videoInput": {
+      const d = data as import("@/types").VideoInputNodeData;
+      // Externalize base64 video data
+      if (d.videoRef && isDataUrl(d.video)) {
+        newData = { ...d, video: null };
+      } else if (isDataUrl(d.video)) {
+        const videoRef = await saveVideoAndGetRef(d.video, workflowPath, savedMediaIds);
+        newData = { ...d, video: null, videoRef: videoRef || undefined };
+      } else {
+        newData = d;
+      }
+      break;
+    }
+
     case "annotation": {
       const d = data as import("@/types").AnnotationNodeData;
       let sourceImageRef = d.sourceImageRef;
@@ -814,6 +828,20 @@ async function hydrateNodeMedia(
         newData = {
           ...d,
           audioFile,
+        };
+      } else {
+        newData = d;
+      }
+      break;
+    }
+
+    case "videoInput": {
+      const d = data as import("@/types").VideoInputNodeData;
+      if (d.videoRef && !d.video) {
+        const video = await loadMediaById(d.videoRef, workflowPath, loadedMedia, "video");
+        newData = {
+          ...d,
+          video,
         };
       } else {
         newData = d;

@@ -28,7 +28,7 @@ describe("QuickstartInitialView", () => {
       );
 
       expect(screen.getByText("Node Banana")).toBeInTheDocument();
-      expect(screen.getByAltText("")).toBeInTheDocument(); // Logo image
+      expect(screen.getAllByAltText("").length).toBeGreaterThan(0); // Logo images
     });
 
     it("should render the description text", () => {

@@ -14,6 +14,7 @@ const ALL_NODES_CATEGORIES: { label: string; nodes: { type: NodeType; label: str
     nodes: [
       { type: "imageInput", label: "Image Input" },
       { type: "audioInput", label: "Audio Input" },
+      { type: "videoInput", label: "Video Input" },
       { type: "glbViewer", label: "3D Viewer" },
     ],
   },
@@ -416,6 +417,7 @@ export function FloatingActionBar() {
     <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
       <div className="flex items-center gap-0.5 bg-neutral-800/95 rounded-lg shadow-lg border border-neutral-700/80 px-1.5 py-1">
         <NodeButton type="imageInput" label="Image" />
+        <NodeButton type="videoInput" label="Video" />
         <NodeButton type="prompt" label="Prompt" />
         <GenerateComboButton />
         <NodeButton type="output" label="Output" />
