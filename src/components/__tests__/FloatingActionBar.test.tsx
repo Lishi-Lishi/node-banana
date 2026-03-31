@@ -284,7 +284,7 @@ describe("FloatingActionBar", () => {
 
       // Dropdown menu items should appear
       expect(screen.getByText("Image", { selector: "button.w-full" })).toBeInTheDocument();
-      expect(screen.getByText("Video")).toBeInTheDocument();
+      expect(screen.getByText("Video", { selector: "button.w-full" })).toBeInTheDocument();
       expect(screen.getByText("Text (LLM)")).toBeInTheDocument();
     });
 
@@ -321,7 +321,7 @@ describe("FloatingActionBar", () => {
       });
 
       fireEvent.click(screen.getByText("Generate"));
-      fireEvent.click(screen.getByText("Video"));
+      fireEvent.click(screen.getByText("Video", { selector: "button.w-full" }));
 
       expect(mockAddNode).toHaveBeenCalledWith("generateVideo", expect.any(Object));
     });
@@ -357,13 +357,13 @@ describe("FloatingActionBar", () => {
       fireEvent.click(screen.getByText("Generate"));
 
       // Verify dropdown is open
-      expect(screen.getByText("Video")).toBeInTheDocument();
+      expect(screen.getByText("Video", { selector: "button.w-full" })).toBeInTheDocument();
 
       // Click an option
-      fireEvent.click(screen.getByText("Video"));
+      fireEvent.click(screen.getByText("Video", { selector: "button.w-full" }));
 
       // Dropdown should close
-      expect(screen.queryByText("Video")).not.toBeInTheDocument();
+      expect(screen.queryByText("Video", { selector: "button.w-full" })).not.toBeInTheDocument();
     });
   });
 

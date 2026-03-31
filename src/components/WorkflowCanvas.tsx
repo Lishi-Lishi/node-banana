@@ -25,6 +25,7 @@ import dynamic from "next/dynamic";
 import {
   ImageInputNode,
   AudioInputNode,
+  VideoInputNode,
   AnnotationNode,
   PromptNode,
   ArrayNode,
@@ -55,7 +56,7 @@ import { MultiSelectToolbar } from "./MultiSelectToolbar";
 import { EdgeToolbar } from "./EdgeToolbar";
 import { GlobalImageHistory } from "./GlobalImageHistory";
 import { GroupBackgroundsPortal, GroupControlsOverlay } from "./GroupsOverlay";
-import { NodeType, NanoBananaNodeData, HandleType } from "@/types";
+import { NodeType, NanoBananaNodeData, HandleType, PromptNodeData, LLMGenerateNodeData, PromptConstructorNodeData, AvailableVariable } from "@/types";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { FloatingNodeHeader } from "./nodes/FloatingNodeHeader";
 import { ControlPanel } from "./nodes/ControlPanel";
@@ -67,6 +68,9 @@ import { ChatPanel } from "./ChatPanel";
 import { EditOperation } from "@/lib/chat/editOperations";
 import { stripBinaryData } from "@/lib/chat/contextBuilder";
 import { PromptEditorModal } from "./modals/PromptEditorModal";
+import { PromptConstructorEditorModal } from "./modals/PromptConstructorEditorModal";
+import { resolveTextSourcesThroughRouters } from "@/store/utils/connectedInputs";
+import { parseVarTags } from "@/utils/parseVarTags";
 import { AnnotationModal } from "./AnnotationModal";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
@@ -77,6 +81,7 @@ import { useAnnotationStore } from "@/store/annotationStore";
 const nodeTypes: NodeTypes = {
   imageInput: ImageInputNode,
   audioInput: AudioInputNode,
+  videoInput: VideoInputNode,
   annotation: AnnotationNode,
   prompt: PromptNode,
   array: ArrayNode,
@@ -137,6 +142,8 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["reference"], outputs: ["image"] };
     case "audioInput":
       return { inputs: ["audio"], outputs: ["audio"] };
+    case "videoInput":
+      return { inputs: ["video"], outputs: ["video"] };
     case "annotation":
       return { inputs: ["image"], outputs: ["image"] };
     case "prompt":
@@ -365,6 +372,7 @@ export function WorkflowCanvas() {
   const NODE_TITLES: Record<string, string> = {
     imageInput: 'Image Input',
     audioInput: 'Audio Input',
+    videoInput: 'Video Input',
     annotation: 'Annotation',
     prompt: 'Prompt',
     array: 'Array',
@@ -527,7 +535,7 @@ export function WorkflowCanvas() {
         if (!targetNode) return false;
 
         const targetNodeType = targetNode.type;
-        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "output" || targetNodeType === "router") {
+        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "videoInput" || targetNodeType === "output" || targetNodeType === "router") {
           // For output node, we allow video even though its handle is typed as "image"
           // because output node can display both images and videos
           return true;
@@ -1164,7 +1172,11 @@ export function WorkflowCanvas() {
           sourceHandleIdForNewNode = "text";
         }
       } else if (handleType === "video") {
-        if (nodeType === "videoStitch") {
+        if (nodeType === "videoInput") {
+          // VideoInput accepts video input and outputs video
+          targetHandleId = "video";
+          sourceHandleIdForNewNode = "video";
+        } else if (nodeType === "videoStitch") {
           // VideoStitch has dynamic video-N inputs and a video output
           targetHandleId = "video-0";
           sourceHandleIdForNewNode = "video";
@@ -1303,6 +1315,8 @@ export function WorkflowCanvas() {
   const pasteNodes = useWorkflowStore((state) => state.pasteNodes);
   const clearClipboard = useWorkflowStore((state) => state.clearClipboard);
   const clipboard = useWorkflowStore((state) => state.clipboard);
+  const undo = useWorkflowStore((state) => state.undo);
+  const redo = useWorkflowStore((state) => state.redo);
 
   // Add non-passive wheel listener to handle zoom/pan and prevent browser navigation
   // This replaces the onWheel prop which is passive by default and can't preventDefault
@@ -1410,6 +1424,18 @@ export function WorkflowCanvas() {
       return;
     }
 
+    // Handle undo (Ctrl/Cmd + Z) and redo (Ctrl/Cmd + Shift + Z)
+    // Normalize key to lowercase — Shift makes event.key uppercase ("Z" instead of "z")
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+      return;
+    }
+
       // Helper to get viewport center position in flow coordinates
       const getViewportCenter = () => {
         const viewport = getViewport();
@@ -1448,6 +1474,9 @@ export function WorkflowCanvas() {
           case "t":
             nodeType = "generateAudio";
             break;
+          case "y":
+            nodeType = "videoInput";
+            break;
         }
 
         if (nodeType) {
@@ -1457,6 +1486,7 @@ export function WorkflowCanvas() {
           const defaultDimensions: Record<NodeType, { width: number; height: number }> = {
             imageInput: { width: 300, height: 280 },
             audioInput: { width: 300, height: 200 },
+            videoInput: { width: 300, height: 280 },
             annotation: { width: 300, height: 280 },
             prompt: { width: 320, height: 220 },
             array: { width: 360, height: 360 },
@@ -1655,7 +1685,7 @@ export function WorkflowCanvas() {
           ]);
         });
       }
-  }, [nodes, onNodesChange, copySelectedNodes, pasteNodes, clearClipboard, clipboard, getViewport, addNode, updateNodeData, executeWorkflow, setShortcutsDialogOpen]);
+  }, [nodes, onNodesChange, copySelectedNodes, pasteNodes, clearClipboard, clipboard, getViewport, addNode, updateNodeData, executeWorkflow, setShortcutsDialogOpen, undo, redo]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
@@ -2043,6 +2073,8 @@ export function WorkflowCanvas() {
                 return "#3b82f6";
               case "audioInput":
                 return "#a78bfa";
+              case "videoInput":
+                return "#c084fc"; // purple-400 (video input, distinct from generateVideo's #9333ea)
               case "annotation":
                 return "#8b5cf6";
               case "prompt":
@@ -2213,10 +2245,50 @@ export function WorkflowCanvas() {
       {expandingNode && expandingNode.type === 'promptConstructor' && (() => {
         const node = getNodeById(expandingNode.id);
         if (!node) return null;
+
+        // Compute available variables from connected text nodes (same logic as PromptConstructorNode)
+        const directTextNodes = edges
+          .filter((e) => e.target === expandingNode.id && e.targetHandle === "text")
+          .map((e) => nodes.find((n) => n.id === e.source))
+          .filter((n): n is typeof nodes[0] => n !== undefined);
+        const connectedTextNodes = resolveTextSourcesThroughRouters(directTextNodes, nodes, edges);
+
+        const vars: AvailableVariable[] = [];
+        const usedNames = new Set<string>();
+
+        connectedTextNodes.forEach((cn) => {
+          if (cn.type === "prompt") {
+            const promptData = cn.data as PromptNodeData;
+            if (promptData.variableName) {
+              vars.push({ name: promptData.variableName, value: promptData.prompt || "", nodeId: cn.id });
+              usedNames.add(promptData.variableName);
+            }
+          }
+        });
+
+        connectedTextNodes.forEach((cn) => {
+          let text: string | null = null;
+          if (cn.type === "prompt") text = (cn.data as PromptNodeData).prompt || null;
+          else if (cn.type === "llmGenerate") text = (cn.data as LLMGenerateNodeData).outputText || null;
+          else if (cn.type === "promptConstructor") {
+            const pcData = cn.data as PromptConstructorNodeData;
+            text = pcData.outputText ?? pcData.template ?? null;
+          }
+          if (text) {
+            parseVarTags(text).forEach(({ name, value }) => {
+              if (!usedNames.has(name)) {
+                vars.push({ name, value, nodeId: `${cn.id}-var-${name}` });
+                usedNames.add(name);
+              }
+            });
+          }
+        });
+
         return createPortal(
-          <PromptEditorModal
+          <PromptConstructorEditorModal
             isOpen={true}
-            initialPrompt={(node.data as any)?.template || ''}
+            initialTemplate={(node.data as PromptConstructorNodeData)?.template || ''}
+            availableVariables={vars}
             onSubmit={(template) => {
               updateNodeData(expandingNode.id, { template });
               setExpandingNode(null);

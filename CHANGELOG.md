@@ -6,87 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-31
+
+### Added
+
+- **Video Input node** — Upload, preview, and wire video files through workflows with drag-and-drop support, native playback controls, and full-bleed styling matching Image Input nodes
+- **Undo/Redo** — Full undo/redo history with Cmd+Z / Cmd+Shift+Z, intelligently coalescing multi-node deletions into single undo steps
+- **Veo model parameters** — Aspect ratio, quality, and duration controls now render in the Generate Video node UI
+- **NB Pro Waitlist** — Added waitlist link to the welcome modal
+
+### Fixed
+
+- Selected-node execution now properly hydrates audio and video input nodes from upstream connections
+
 ## [1.2.0] - 2026-03-29
 
 ### Added
 
-- Discover workflows in nested subdirectories
-- Add WorkflowBrowserModal and wire up Header open-project button
-- Wire browse view into WelcomeModal
-- Add WorkflowBrowserView component for browsing saved workflows
-- Add /api/list-workflows route to enumerate workflow directories
-- Add localStorage helpers for workflows directory
-- Use directory picker for load workflow in WelcomeModal
-- Open workflow via native OS directory picker for media hydration
-- Extend media externalization to support videos and audio
-- Add missing ref fields for media externalization
-- Add skipped node visual treatment during execution
-- Add Optional/Required toggle button to input node headers
-- Add visual indicators for optional input nodes
-- Add skip propagation to workflow execution engine
-- Add isOptional flag to input node types and skipped status
-- Prefill project directory from last-used path in new project flow
-- Add "NBP Input" toggle to group context menu
-- Redesign group menu as vertical context menu
-- Move group controls into three-dot menu next to title
+- **Workflow Browser** — browse, search, and open saved workflows from a new modal (supports nested subdirectories, directory picker, and last-used path memory)
+- **Media Externalization** — videos and audio now save alongside images in the generations/ folder for portable workflows
+- **Optional Inputs & Skip Propagation** — mark input nodes as optional; execution skips downstream nodes when optional inputs are empty
+- **Group Context Menu** — redesigned as a vertical dropdown with color picker, lock toggle, and NBP Input flag
 
 ### Fixed
 
-- Remove cleanup script, show lock icon on locked groups
-- Code review fixes for groups, a11y, regex, and dialog semantics
-- Cleanup-workflow filter, workflow load validation, media hydration guard
-- Update GroupsOverlay tests for dropdown menu UI
-- Restore skippedNodeIds to store for canvas visual feedback
-- Update WelcomeModal and QuickstartInitialView tests for new flow
-- Update Header tests for WorkflowBrowserModal-based open flow
-- Embed directoryPath in workflow JSON for portable hydration
-- Save video/audio to generations/ and strip imageHistory bloat
 - Video/audio save-load roundtrip (3 compounding bugs)
-- Correct API parameter names for media save/load
-- Handle null return values from media save functions
-- Handle outputGallery nodes in image externalization
-- Correct GitHub repo URLs to shrimbly/node-banana
-- Clear error state when navigating generation carousel
-- Refine NBP input group border to 3px dashed white at 25% opacity
-- Center color fan origin on top-left corner of context menu
-- Increase color dot hover scale from 110% to 125%
-- Use left/top for color dot positioning so hover scale doesn't shift
-- Widen color fan arc spread from 150° to 180°
-- Shift color fan center to -130° for tighter corner wrap
-- Rotate color fan 20° anti-clockwise to wrap around menu corner
-- Hide three-dot icon when expanded menu is open
-- Add left margin before controls and tighten icon gaps
-- Reduce three-dot menu dots to match other icon sizes
-- Increase group menu icon sizes for better visibility
-
-### Changed
-
-- Remove dual-tracked skippedNodeIds local variable
-- Remove skippedNodeIds from store, extract resetSkippedNodes helper
+- Lock icon now shown on locked groups
+- Error state cleared when navigating generation carousel
+- Various a11y, regex, and dialog semantics fixes
 
 ### Performance
 
-- Speed up workflow listing by reading only file headers
+- Faster workflow listing by reading only file headers
 
 ### Documentation
 
-- Simplify contributing section
-- List all 23 node types and update tagline
-- Update README to enhance feature descriptions and clarify API key configuration
-- Add dynamic prompting as top feature, add video/3D/audio generation
-- Clarify Gemini key is required for prompt-to-workflow
-- Add all provider API keys to env example
-- Redesign README with hero layout and updated screenshot
-
-### Tests
-
-- Add tests for WorkflowBrowserModal and list-workflows API route
-- Add skip propagation tests and fix WorkflowCanvas mock
-
-### Other
-
-- Remove dead code, move script, add hydration batching
-- Improve workflow browser visual hierarchy and listing design
+- Redesigned README with hero layout, all 23 node types, and updated screenshots
 
 ## [1.1.3] - 2026-03-22
 

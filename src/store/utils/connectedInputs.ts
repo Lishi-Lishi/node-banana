@@ -10,6 +10,7 @@ import {
   WorkflowEdge,
   ImageInputNodeData,
   AudioInputNodeData,
+  VideoInputNodeData,
   AnnotationNodeData,
   NanoBananaNodeData,
   GenerateVideoNodeData,
@@ -68,6 +69,8 @@ function getSourceOutput(
 ): { type: "image" | "text" | "video" | "audio" | "3d"; value: string | null } {
   if (sourceNode.type === "imageInput") {
     return { type: "image", value: (sourceNode.data as ImageInputNodeData).image };
+  } else if (sourceNode.type === "videoInput") {
+    return { type: "video", value: (sourceNode.data as VideoInputNodeData).video };
   } else if (sourceNode.type === "audioInput") {
     return { type: "audio", value: (sourceNode.data as AudioInputNodeData).audioFile };
   } else if (sourceNode.type === "annotation") {

@@ -25,6 +25,7 @@ import type { LLMProvider, LLMModelType, SelectedModel, ProviderType } from "./p
 export type NodeType =
   | "imageInput"
   | "audioInput"
+  | "videoInput"
   | "annotation"
   | "prompt"
   | "array"
@@ -72,6 +73,19 @@ export interface AudioInputNodeData extends BaseNodeData {
   filename: string | null;       // Original filename for display
   duration: number | null;       // Duration in seconds
   format: string | null;         // MIME type (audio/mp3, audio/wav, etc.)
+  isOptional?: boolean;
+}
+
+/**
+ * Video input node - loads/uploads video files into the workflow
+ */
+export interface VideoInputNodeData extends BaseNodeData {
+  video: string | null;          // Base64 data URL or blob URL
+  videoRef?: string;             // External video reference for storage optimization
+  filename: string | null;
+  duration: number | null;       // Duration in seconds
+  dimensions: { width: number; height: number } | null;
+  format: string | null;         // MIME type (video/mp4, video/webm, etc.)
   isOptional?: boolean;
 }
 
@@ -456,6 +470,7 @@ export interface GLBViewerNodeData extends BaseNodeData {
 export type WorkflowNodeData =
   | ImageInputNodeData
   | AudioInputNodeData
+  | VideoInputNodeData
   | AnnotationNodeData
   | PromptNodeData
   | ArrayNodeData

@@ -83,6 +83,15 @@ export function QuickstartInitialView({
               </svg>
               Willie
             </a>
+            <a
+              href="https://nodebananapro.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+            >
+              <img src="/banana_icon.png" alt="" className="w-4 h-4" />
+              NB Pro Waitlist
+            </a>
           </div>
         </div>
 
@@ -140,6 +149,7 @@ export function QuickstartInitialView({
             description="Get Gemini to build it"
             badge="Beta"
           />
+
         </div>
       </div>
     </div>
