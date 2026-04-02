@@ -11,6 +11,7 @@
   --handle-color-image: #10b981;
   --handle-color-text: #3b82f6;
   --handle-color-3d: #f97316;
+  --handle-color-audio: #a855f7;
 }
 
 html {
@@ -116,6 +117,11 @@ body {
 /* Text handles - soft blue */
 .react-flow__handle[data-handletype="text"] {
   background: #3b82f6;
+}
+
+/* Audio handles - purple */
+.react-flow__handle[data-handletype="audio"] {
+  background: #a855f7;
 }
 
 /* 3D handles - orange */

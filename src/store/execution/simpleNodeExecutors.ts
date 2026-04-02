@@ -293,14 +293,17 @@ export async function executeOutput(ctx: NodeExecutionContext): Promise<void> {
  * OutputGallery node: accumulates images from upstream nodes.
  */
 export async function executeOutputGallery(ctx: NodeExecutionContext): Promise<void> {
-  const { node, getConnectedInputs, updateNodeData } = ctx;
+  const { node, getConnectedInputs, updateNodeData, getFreshNode } = ctx;
   const { images } = getConnectedInputs(node.id);
-  const galleryData = node.data as OutputGalleryNodeData;
-  const existing = new Set(galleryData.images || []);
+  // Use fresh node data — the stale `node` from topological sort may be missing
+  // images pushed by appendOutputGalleryImage during upstream batch execution.
+  const freshNode = getFreshNode(node.id);
+  const galleryImages = ((freshNode?.data ?? node.data) as OutputGalleryNodeData).images || [];
+  const existing = new Set(galleryImages);
   const newImages = images.filter((img) => !existing.has(img));
   if (newImages.length > 0) {
     updateNodeData(node.id, {
-      images: [...newImages, ...(galleryData.images || [])],
+      images: [...newImages, ...galleryImages],
     });
   }
 }

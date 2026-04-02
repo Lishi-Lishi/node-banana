@@ -45,3 +45,5 @@ export {
   executeVideoTrim,
   executeVideoFrameGrab,
 } from "./videoProcessingExecutors";
+
+export { runBatchIfApplicable } from "./batchExecution";

@@ -110,6 +110,7 @@ export interface ArrayNodeData extends BaseNodeData {
   regexPattern: string;
   trimItems: boolean;
   removeEmpty: boolean;
+  batchMode: boolean; // When true, all items are sent as a batch to downstream generate nodes
   selectedOutputIndex: number | null;
   outputItems: string[];
   outputText: string | null; // JSON array string for the primary text output
@@ -172,7 +173,7 @@ export interface CarouselVideoItem {
  */
 export interface ModelInputDef {
   name: string;
-  type: "image" | "text";
+  type: "image" | "text" | "audio";
   required: boolean;
   label: string;
   description?: string;

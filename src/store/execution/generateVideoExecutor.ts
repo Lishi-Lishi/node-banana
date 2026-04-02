@@ -33,7 +33,7 @@ export async function executeGenerateVideo(
 
   const { useStoredFallback = false } = options;
 
-  const { images: connectedImages, text: connectedText, dynamicInputs } = getConnectedInputs(node.id);
+  const { images: connectedImages, text: connectedText, audio: connectedAudio, dynamicInputs } = getConnectedInputs(node.id);
 
   // Get fresh node data from store
   const freshNode = getFreshNode(node.id);
@@ -48,7 +48,8 @@ export async function executeGenerateVideo(
     text = connectedText ?? nodeData.inputPrompt;
     // Validate fallback inputs the same way as the regular path
     const hasPrompt = text || dynamicInputs.prompt || dynamicInputs.negative_prompt;
-    if (!hasPrompt && images.length === 0) {
+    const hasAudio = connectedAudio.length > 0;
+    if (!hasPrompt && images.length === 0 && !hasAudio) {
       updateNodeData(node.id, {
         status: "error",
         error: "Missing required inputs",
@@ -58,9 +59,10 @@ export async function executeGenerateVideo(
   } else {
     images = connectedImages;
     text = connectedText;
-    // For dynamic inputs, check if we have at least a prompt
+    // For dynamic inputs, check if we have at least a prompt, images, or audio
     const hasPrompt = text || dynamicInputs.prompt || dynamicInputs.negative_prompt;
-    if (!hasPrompt && images.length === 0) {
+    const hasAudio = connectedAudio.length > 0;
+    if (!hasPrompt && images.length === 0 && !hasAudio) {
       updateNodeData(node.id, {
         status: "error",
         error: "Missing required inputs",

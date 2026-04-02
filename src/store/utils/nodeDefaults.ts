@@ -125,6 +125,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         regexPattern: "",
         trimItems: true,
         removeEmpty: true,
+        batchMode: false,
         selectedOutputIndex: null,
         outputItems: [],
         outputText: "[]",

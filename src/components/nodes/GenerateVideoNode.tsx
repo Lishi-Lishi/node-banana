@@ -19,7 +19,7 @@ import { InlineParameterPanel } from "./InlineParameterPanel";
 import { browseRegistry } from "@/utils/browseRegistry";
 
 // Video generation capabilities
-const VIDEO_CAPABILITIES: ModelCapability[] = ["text-to-video", "image-to-video"];
+const VIDEO_CAPABILITIES: ModelCapability[] = ["text-to-video", "image-to-video", "audio-to-video"];
 
 /** Returns true for Gemini-native Veo video models */
 function isVeoModel(modelId: string | undefined): boolean {
@@ -416,16 +416,18 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
         // we still need the image handle to preserve connections made before model selection.
         (() => {
           const imageInputs = nodeData.inputSchema!.filter(i => i.type === "image");
+          const audioInputs = nodeData.inputSchema!.filter(i => i.type === "audio");
           const textInputs = nodeData.inputSchema!.filter(i => i.type === "text");
 
           // Always include at least one image and one text handle for connection stability
           const hasImageInput = imageInputs.length > 0;
+          const hasAudioInput = audioInputs.length > 0;
           const hasTextInput = textInputs.length > 0;
 
           // Build the handles array: schema inputs + fallback defaults if missing
           const handles: Array<{
             id: string;
-            type: "image" | "text";
+            type: "image" | "text" | "audio";
             label: string;
             schemaName: string | null;
             description: string | null;
@@ -436,7 +438,6 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
           if (hasImageInput) {
             imageInputs.forEach((input, index) => {
               handles.push({
-                // Always use indexed IDs for schema inputs for consistency
                 id: `image-${index}`,
                 type: "image",
                 label: input.label,
@@ -446,7 +447,6 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
               });
             });
           } else {
-            // No image inputs in schema - add placeholder to preserve connections
             handles.push({
               id: "image",
               type: "image",
@@ -457,11 +457,24 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
             });
           }
 
+          // Add audio handles from schema (no placeholder — audio is not a default input)
+          if (hasAudioInput) {
+            audioInputs.forEach((input, index) => {
+              handles.push({
+                id: `audio-${index}`,
+                type: "audio",
+                label: input.label,
+                schemaName: input.name,
+                description: input.description || null,
+                isPlaceholder: false,
+              });
+            });
+          }
+
           // Add text handles from schema, or a placeholder if none exist
           if (hasTextInput) {
             textInputs.forEach((input, index) => {
               handles.push({
-                // Always use indexed IDs for schema inputs for consistency
                 id: `text-${index}`,
                 type: "text",
                 label: input.label,
@@ -471,7 +484,6 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
               });
             });
           } else {
-            // No text inputs in schema - add placeholder to preserve connections
             handles.push({
               id: "text",
               type: "text",
@@ -482,18 +494,32 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
             });
           }
 
-          // Calculate positions
+          // Calculate positions: group by type order (image, audio, text) with gaps between groups
           const imageHandles = handles.filter(h => h.type === "image");
+          const audioHandles = handles.filter(h => h.type === "audio");
           const textHandles = handles.filter(h => h.type === "text");
-          const totalSlots = imageHandles.length + textHandles.length + 1; // +1 for gap
+          const groupCount = [imageHandles.length > 0, audioHandles.length > 0, textHandles.length > 0].filter(Boolean).length;
+          const totalSlots = imageHandles.length + audioHandles.length + textHandles.length + (groupCount - 1); // gaps between groups
 
-          const renderedHandles = handles.map((handle, index) => {
-            // Position: images first, then gap, then text
-            const isImage = handle.type === "image";
-            const typeIndex = isImage
-              ? imageHandles.findIndex(h => h.id === handle.id)
-              : textHandles.findIndex(h => h.id === handle.id);
-            const adjustedIndex = isImage ? typeIndex : imageHandles.length + 1 + typeIndex;
+          const getHandleColor = (type: string) => {
+            if (type === "image") return "var(--handle-color-image)";
+            if (type === "audio") return "var(--handle-color-audio)";
+            return "var(--handle-color-text)";
+          };
+
+          const renderedHandles = handles.map((handle) => {
+            // Calculate position based on type group ordering
+            let adjustedIndex: number;
+            if (handle.type === "image") {
+              adjustedIndex = imageHandles.findIndex(h => h.id === handle.id);
+            } else if (handle.type === "audio") {
+              const gapAfterImages = imageHandles.length > 0 ? 1 : 0;
+              adjustedIndex = imageHandles.length + gapAfterImages + audioHandles.findIndex(h => h.id === handle.id);
+            } else {
+              const gapAfterImages = imageHandles.length > 0 && (audioHandles.length > 0 || textHandles.length > 0) ? 1 : 0;
+              const gapAfterAudio = audioHandles.length > 0 && textHandles.length > 0 ? 1 : 0;
+              adjustedIndex = imageHandles.length + gapAfterImages + audioHandles.length + gapAfterAudio + textHandles.findIndex(h => h.id === handle.id);
+            }
             const topPercent = ((adjustedIndex + 1) / (totalSlots + 1)) * 100;
 
             return (
@@ -518,7 +544,7 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
                   style={{
                     right: `calc(100% + 8px)`,
                     top: `calc(${topPercent}% - 18px)`,
-                    color: isImage ? "var(--handle-color-image)" : "var(--handle-color-text)",
+                    color: getHandleColor(handle.type),
                     opacity: handle.isPlaceholder ? 0.3 : 1,
                     zIndex: 10,
                   }}
@@ -530,8 +556,6 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
           });
 
           // Add hidden backward-compatibility handles for edges using non-indexed IDs
-          // This ensures edges created with "image"/"text" still work when schema uses "image-0"/"text-0"
-          // Note: No data-handletype to avoid being counted in tests - these are purely for edge routing
           return (
             <>
               {renderedHandles}
@@ -541,6 +565,15 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
                   position={Position.Left}
                   id="image"
                   style={{ top: "35%", opacity: 0, pointerEvents: "none" }}
+                  isConnectable={false}
+                />
+              )}
+              {hasAudioInput && (
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id="audio"
+                  style={{ top: "50%", opacity: 0, pointerEvents: "none" }}
                   isConnectable={false}
                 />
               )}

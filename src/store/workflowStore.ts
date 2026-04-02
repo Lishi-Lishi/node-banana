@@ -26,7 +26,7 @@ import {
   MatchMode,
   MODEL_DISPLAY_NAMES,
 } from "@/types";
-import { UndoManager, UndoSnapshot } from "./undoHistory";
+import { UndoManager, UndoSnapshot, clonePreservingStrings } from "./undoHistory";
 import { useToast } from "@/components/Toast";
 import { logger } from "@/utils/logger";
 import { externalizeWorkflowMedia, hydrateWorkflowMedia } from "@/utils/mediaStorage";
@@ -60,7 +60,7 @@ import {
   chunk,
   clearNodeImageRefs,
 } from "./utils/executionUtils";
-import { getConnectedInputsPure, validateWorkflowPure } from "./utils/connectedInputs";
+import { getConnectedInputsPure, validateWorkflowPure, type ConnectedInputs } from "./utils/connectedInputs";
 import { evaluateRule } from "./utils/ruleEvaluation";
 import { computeDimmedNodes } from "./utils/dimmingUtils";
 import {
@@ -85,6 +85,7 @@ import {
   executeRouter,
   executeSwitch,
   executeConditionalSwitch,
+  runBatchIfApplicable,
 } from "./execution";
 import type { NodeExecutionContext } from "./execution";
 export type { LevelGroup } from "./utils/executionUtils";
@@ -96,7 +97,7 @@ export { CONCURRENCY_SETTINGS_KEY } from "./utils/executionUtils";
 async function evaluateAndExecuteConditionalSwitch(
   node: WorkflowNode,
   executionCtx: NodeExecutionContext,
-  getConnectedInputs: (nodeId: string) => { text: string | null; images: string[]; videos: string[]; audio: string[]; model3d: string | null; dynamicInputs: Record<string, string | string[]>; easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null; outputDuration: number } | null },
+  getConnectedInputs: (nodeId: string) => ConnectedInputs,
   updateNodeData: (nodeId: string, data: Partial<WorkflowNodeData>) => void,
 ): Promise<void> {
   const condInputs = getConnectedInputs(node.id);
@@ -144,6 +145,10 @@ function buildConnectionEdgeData(
   // Array node uses a single output handle; assign each edge a stable item index.
   if (sourceNode?.type === "array" && (connection.sourceHandle || "text") === "text") {
     const sourceData = sourceNode.data as Record<string, unknown>;
+
+    // Batch mode is now derived dynamically in connectedInputs.ts from
+    // the source node's batchMode — no need to stamp edge metadata.
+
     const selectedIndex = sourceData.selectedOutputIndex;
     const outputItems = Array.isArray(sourceData.outputItems) ? sourceData.outputItems : [];
     const outputCount = outputItems.length;
@@ -276,7 +281,7 @@ interface WorkflowStore {
 
   // Helpers
   getNodeById: (id: string) => WorkflowNode | undefined;
-  getConnectedInputs: (nodeId: string) => { images: string[]; videos: string[]; audio: string[]; model3d: string | null; text: string | null; dynamicInputs: Record<string, string | string[]>; easeCurve: { bezierHandles: [number, number, number, number]; easingPreset: string | null; outputDuration: number } | null };
+  getConnectedInputs: (nodeId: string) => ConnectedInputs;
   validateWorkflow: () => { valid: boolean; errors: string[] };
 
   // Global Image History
@@ -474,12 +479,12 @@ function clearStaleInputImages(
 
 /** Capture current undoable state as a deep-cloned snapshot */
 function captureUndoSnapshot(state: WorkflowStore): UndoSnapshot {
-  const cloned = JSON.parse(JSON.stringify({
+  const cloned = clonePreservingStrings({
     nodes: state.nodes,
     edges: state.edges,
     groups: state.groups,
     edgeStyle: state.edgeStyle,
-  })) as UndoSnapshot;
+  }) as UndoSnapshot;
   // Strip transient selection state from cloned nodes
   for (const node of cloned.nodes) {
     delete (node as Record<string, unknown>).selected;
@@ -902,8 +907,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     );
 
     // Deep clone the nodes and edges to avoid reference issues
-    const clonedNodes = JSON.parse(JSON.stringify(selectedNodes)) as WorkflowNode[];
-    const clonedEdges = JSON.parse(JSON.stringify(connectedEdges)) as WorkflowEdge[];
+    const clonedNodes = clonePreservingStrings(selectedNodes) as WorkflowNode[];
+    const clonedEdges = clonePreservingStrings(connectedEdges) as WorkflowEdge[];
 
     set({ clipboard: { nodes: clonedNodes, edges: clonedEdges } });
   },
@@ -941,7 +946,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         width: undefined,
         height: undefined,
         measured: undefined,
-        data: JSON.parse(JSON.stringify(node.data)),
+        data: clonePreservingStrings(node.data),
       };
     });
 
@@ -1314,6 +1319,11 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
       const executionCtx = get()._buildExecutionContext(node, signal);
 
+      // Batch mode: for generate-type nodes, detect textItems and loop through them
+      if (await runBatchIfApplicable(executionCtx)) {
+        return;
+      }
+
       switch (node.type) {
           case "imageInput":
             // Data source node - no execution needed
@@ -1515,7 +1525,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       return;
     }
 
-    set({ isRunning: true, currentNodeIds: [nodeId] });
+    // Create AbortController so stopWorkflow() can cancel regeneration
+    const abortController = new AbortController();
+    set({ isRunning: true, currentNodeIds: [nodeId], _abortController: abortController });
 
     await logger.startSession();
     logger.info('node.execution', 'Regenerating node', {
@@ -1524,11 +1536,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     });
 
     try {
-      const executionCtx = get()._buildExecutionContext(node);
+      const executionCtx = get()._buildExecutionContext(node, abortController.signal);
 
       const regenOptions = { useStoredFallback: true };
 
-      if (node.type === "nanoBanana") {
+      // Try batch mode first (handles textItems from array nodes)
+      const wasBatch = await runBatchIfApplicable(executionCtx, regenOptions);
+
+      if (wasBatch) {
+        // Batch handled — skip to downstream execution
+      } else if (node.type === "nanoBanana") {
         await executeNanoBanana(executionCtx, regenOptions);
       } else if (node.type === "array") {
         await executeArray(executionCtx);
@@ -1544,27 +1561,27 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         await executeSplitGrid(executionCtx);
       } else if (node.type === "videoStitch") {
         await executeVideoStitch(executionCtx);
-        set({ isRunning: false, currentNodeIds: [] });
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
       } else if (node.type === "easeCurve") {
         await executeEaseCurve(executionCtx);
-        set({ isRunning: false, currentNodeIds: [] });
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
       } else if (node.type === "videoTrim") {
         await executeVideoTrim(executionCtx);
-        set({ isRunning: false, currentNodeIds: [] });
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
       } else if (node.type === "videoFrameGrab") {
         await executeVideoFrameGrab(executionCtx);
-        set({ isRunning: false, currentNodeIds: [] });
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
       } else if (node.type === "output") {
         await executeOutput(executionCtx);
-        set({ isRunning: false, currentNodeIds: [] });
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
       }
@@ -1594,7 +1611,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }
 
       logger.info('node.execution', 'Node regeneration completed successfully', { nodeId });
-      set({ isRunning: false, currentNodeIds: [] });
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();
       await logger.endSession();
@@ -1606,7 +1623,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         status: "error",
         error: error instanceof Error ? error.message : "Regeneration failed",
       });
-      set({ isRunning: false, currentNodeIds: [] });
+      set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();
       await logger.endSession();
@@ -1660,6 +1677,11 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
       const executionCtx = get()._buildExecutionContext(node, signal);
       const regenOptions = { useStoredFallback: true };
+
+      // Try batch mode first (handles textItems from array nodes)
+      if (await runBatchIfApplicable(executionCtx, regenOptions)) {
+        return;
+      }
 
       switch (node.type) {
         case "imageInput":
@@ -2516,12 +2538,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   captureSnapshot: () => {
     const state = get();
     // Deep copy the current workflow state to avoid reference sharing
-    const snapshot = {
-      nodes: JSON.parse(JSON.stringify(state.nodes)),
-      edges: JSON.parse(JSON.stringify(state.edges)),
-      groups: JSON.parse(JSON.stringify(state.groups)),
+    const snapshot = clonePreservingStrings({
+      nodes: state.nodes,
+      edges: state.edges,
+      groups: state.groups,
       edgeStyle: state.edgeStyle,
-    };
+    });
     set({
       previousWorkflowSnapshot: snapshot,
       manualChangeCount: 0,
