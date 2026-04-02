@@ -22,7 +22,7 @@ import { generateWithWaveSpeed } from "./providers/wavespeed";
 // Re-export for backward compatibility (test file imports from route)
 export const clearFalInputMappingCache = _clearFalInputMappingCache;
 
-export const maxDuration = 300; // 5 minute timeout (Vercel hobby plan limit)
+export const maxDuration = 600; // 5 minute timeout (Vercel hobby plan limit)
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
 
 

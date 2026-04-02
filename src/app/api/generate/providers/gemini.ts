@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { GenerateResponse } from "@/types";
 import { GoogleGenAI } from "@google/genai"; // 必须引入，为了视频的轮询功能
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as crypto from "crypto";
 
 // --- 图片模型配置 ---
 const MODEL_MAP: Record<string, string> = {
@@ -10,12 +13,28 @@ const MODEL_MAP: Record<string, string> = {
 };
 
 /**
- * 辅助函数：将图片 (URL 或 Base64) 转为纯 Base64 字符串
+ * 辅助函数：将图片 (URL 或 Base64 或 本地直链) 转为纯 Base64 字符串
  */
 async function imageUrlToBase64(url: string): Promise<string> {
+  // 1. 如果本来就是 Base64，直接提取
   if (url.startsWith("data:")) {
     return url.split("base64,")[1];
   }
+  
+  // 👇 2. 新增核心逻辑：如果是咱们生成的本地直链，直接从硬盘读取
+  if (url.startsWith("/")) {
+    try {
+      const relativePath = url.substring(1); // 去掉开头的斜杠
+      const filePath = path.join(process.cwd(), "public", relativePath);
+      const buffer = await fs.readFile(filePath);
+      return buffer.toString("base64");
+    } catch (error) {
+      console.error(`[Image Router] 无法读取本地垫图文件: ${url}`, error);
+      throw error;
+    }
+  }
+
+  // 3. 原生逻辑：处理真正的外网 HTTP 图片
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch image: ${res.statusText}`);
@@ -25,6 +44,16 @@ async function imageUrlToBase64(url: string): Promise<string> {
     console.error("Image conversion failed:", error);
     throw error;
   }
+}
+
+/**
+ * 辅助函数：计算内容的 MD5 并生成唯一文件名
+ */
+function generateOutputFilename(base64Data: string, extension: string): string {
+  const hash = crypto.createHash("md5").update(base64Data).digest("hex");
+  // 加上时间戳前缀，确保不会覆盖
+  const timestamp = Date.now().toString(36);
+  return `gemini_img_${timestamp}_${hash}.${extension}`;
 }
 
 /**
@@ -131,13 +160,43 @@ export async function generateWithGemini(
 
     const part = candidate?.content?.parts?.[0];
 
-    if (part?.inlineData?.data) {
+if (part?.inlineData?.data) {
       const base64Data = part.inlineData.data;
       const mimeType = part.inlineData.mimeType || "image/png";
-      const dataUrl = `data:${mimeType};base64,${base64Data}`;
       
-      console.log(`[API:${requestId}] ✅ Success! Image generated.`);
-      return NextResponse.json({ success: true, image: dataUrl, contentType: "image" });
+      try {
+        // 1. 确定后缀名
+        const extension = mimeType === "image/jpeg" ? "jpg" : "png";
+        
+        // 2. 在 Next.js 的 public 文件夹下创建一个专门存直链图片的目录
+        const publicOutputsDir = path.join(process.cwd(), "public", "outputs");
+        await fs.mkdir(publicOutputsDir, { recursive: true });
+        
+        // 3. 生成文件名并写入物理硬盘
+        const filename = generateOutputFilename(base64Data, extension);
+        const filePath = path.join(publicOutputsDir, filename);
+        
+        const buffer = Buffer.from(base64Data, "base64");
+        await fs.writeFile(filePath, buffer);
+        
+        // 4. 返回极其轻量的本地直链 URL (前端可以直接用作 <img src>)
+        const localUrl = `/outputs/${filename}`;
+        
+        console.log(`[API:${requestId}] ✅ Success! Image saved locally to ${localUrl}`);
+        
+        // 关键点：我们把这个轻量 URL 塞在 image 字段里退回给前端
+        // 因为前端组件和文件管家 (mediaStorage) 都支持识别 HTTP(S) URL 或相对路径
+        return NextResponse.json({ 
+            success: true, 
+            image: localUrl, 
+            contentType: "image" 
+        });
+      } catch (saveError) {
+        console.error(`[API:${requestId}] ⚠️ Failed to save image locally, falling back to Base64`, saveError);
+        // 如果保存硬盘失败（比如权限问题），优雅降级，退回到传输 Base64
+        const dataUrl = `data:${mimeType};base64,${base64Data}`;
+        return NextResponse.json({ success: true, image: dataUrl, contentType: "image" });
+      }
     }
 
     if (part?.text) {
@@ -241,7 +300,7 @@ export async function generateWithGeminiVideo(
     const queryUrl = `${baseUrl}/v1/video/query?id=${taskId}`;
 
     const POLL_INTERVAL = 10_000; // 10秒查一次
-    const TIMEOUT = 5 * 60 * 1000; // 5分钟超时
+    const TIMEOUT = 10 * 60 * 1000; // 10分钟超时
     const startTime = Date.now();
 
     while (true) {

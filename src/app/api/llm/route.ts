@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { LLMGenerateRequest, LLMGenerateResponse, LLMModelType } from "@/types";
 import { logger } from "@/utils/logger";
+import * as fs from "fs/promises";
+import * as path from "path";
 
 export const maxDuration = 60; // 1 minute timeout
 
@@ -345,12 +347,39 @@ export async function POST(request: NextRequest) {
 
     let text: string;
 
+ // 👇👇👇 终极预处理逻辑开始 👇👇👇
+    let processedImages: string[] | undefined = undefined;
+    if (images && images.length > 0) {
+      processedImages = await Promise.all(images.map(async (img) => {
+        // 判断是否为我们的本地直链
+        if (img.startsWith("/")) {
+          // 关键修复：去掉开头的斜杠，完美兼容 Windows 路径拼接
+          const relativePath = img.startsWith("/") ? img.substring(1) : img;
+          const filePath = path.join(process.cwd(), "public", relativePath);
+          
+          try {
+            const buffer = await fs.readFile(filePath);
+            const base64Data = buffer.toString("base64");
+            const mimeType = img.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+            return `data:${mimeType};base64,${base64Data}`;
+          } catch (err) {
+            // 关键修复：如果读取失败，直接抛出致命错误，把绝对路径打印出来，绝不把残缺数据发给大模型
+            logger.error('api.error', `本地图片读取失败，尝试访问路径: ${filePath}`, { requestId });
+            throw new Error(`无法从硬盘读取图片，请检查文件是否存在于: ${filePath}`);
+          }
+        }
+        return img; // 如果已经是 Base64，原样放行
+      }));
+    }
+    // 👆👆👆 预处理逻辑结束 👆👆👆
+
+    // 👇👇👇 这里的 images 全部严格替换为 processedImages 👇👇👇
     if (provider === "google") {
-      text = await generateWithGoogle(prompt, model, temperature, maxTokens, images, requestId, geminiApiKey);
+      text = await generateWithGoogle(prompt, model, temperature, maxTokens, processedImages, requestId, geminiApiKey);
     } else if (provider === "openai") {
-      text = await generateWithOpenAI(prompt, model, temperature, maxTokens, images, requestId, openaiApiKey);
+      text = await generateWithOpenAI(prompt, model, temperature, maxTokens, processedImages, requestId, openaiApiKey);
     } else if (provider === "anthropic") {
-      text = await generateWithAnthropic(prompt, model, temperature, maxTokens, images, requestId, anthropicApiKey);
+      text = await generateWithAnthropic(prompt, model, temperature, maxTokens, processedImages, requestId, anthropicApiKey);
     } else {
       logger.warn('api.llm', 'Unknown provider requested', { requestId, provider });
       return NextResponse.json<LLMGenerateResponse>(

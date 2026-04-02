@@ -238,6 +238,18 @@ export async function POST(request: NextRequest) {
         }
         throw fetchError;
       }
+      } else if (typeof content === 'string' && content.startsWith('/')) {
+      // 👇👇👇 新增逻辑：处理咱们的本地直链，将其物理拷贝到项目文件夹中
+      logger.info('file.save', 'Reading from local public directory', { localPath: content });
+      
+      // 去咱们刚建的 public 目录里读取真图片
+      const sourcePath = path.join(process.cwd(), "public", content);
+      buffer = await fs.readFile(sourcePath);
+      
+      // 提取正确的后缀名 (比如 jpg 或 png)
+      const extMatch = content.match(/\.([a-zA-Z0-9]+)$/);
+      extension = extMatch ? extMatch[1] : "png";
+      // 👆👆👆 新增逻辑结束
     } else {
       // Handle base64 data URL
       const dataUrlMatch = content.match(/^data:([\w/+-]+);base64,/);

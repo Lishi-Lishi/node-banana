@@ -4,7 +4,7 @@ import * as path from "path";
 import { logger } from "@/utils/logger";
 import { validateWorkflowPath } from "@/utils/pathValidation";
 
-export const maxDuration = 300; // 5 minute timeout for large image operations
+export const maxDuration = 600; // 5 minute timeout for large image operations
 
 const IMAGES_FOLDER = "inputs";
 const LEGACY_IMAGES_FOLDER = ".images"; // For backward compatibility
@@ -145,14 +145,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Extract MIME type and determine file extension
-    const { extension } = getMimeAndExtension(imageData);
+    let buffer: Buffer;
+    let extension: string;
+
+    // 🤖 智能分流：如果是咱们的本地直链 (如 /outputs/xxx.jpg)
+    if (imageData.startsWith('/')) {
+      // 抹掉开头的斜杠，防止 Windows 路径拼接出错
+      const relativePath = imageData.substring(1); 
+      const sourcePath = path.join(process.cwd(), "public", relativePath);
+      
+      // 直接从 public 硬盘读取原文件
+      buffer = await fs.readFile(sourcePath);
+      
+      // 正则提取正确的后缀名
+      const extMatch = imageData.match(/\.([a-zA-Z0-9]+)$/);
+      extension = extMatch ? extMatch[1] : "png";
+    } 
+    // 📦 原来的逻辑：硬解 Base64 乱码
+    else {
+      const extracted = getMimeAndExtension(imageData);
+      extension = extracted.extension;
+      const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+      buffer = Buffer.from(base64Data, "base64");
+    }
+
     const filename = `${safeImageId}.${extension}`;
     const filePath = path.join(targetFolder, filename);
-
-    // Extract base64 data and convert to buffer
-    const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, "base64");
 
     // Write the image file
     await fs.writeFile(filePath, buffer);

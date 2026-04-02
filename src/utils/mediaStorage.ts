@@ -69,7 +69,7 @@ function isHttpUrl(str: string | null | undefined): boolean {
  * Check if a string is a base64 data URL (any type)
  */
 function isDataUrl(str: string | null | undefined): str is string {
-  return typeof str === "string" && str.startsWith("data:");
+  return typeof str === "string" && (str.startsWith("data:") || str.startsWith("/outputs/"));
 }
 
 /**
