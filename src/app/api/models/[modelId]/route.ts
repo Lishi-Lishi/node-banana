@@ -54,6 +54,15 @@ const IMAGE_INPUT_PATTERNS = [
   "control_image",
 ];
 
+// Audio input property patterns
+const AUDIO_INPUT_PATTERNS = [
+  "audio_url",
+  "audio_urls",
+  "audio_input",
+  "audio_file",
+  "audio",
+];
+
 // Text input properties
 const TEXT_INPUT_NAMES = ["prompt", "negative_prompt"];
 
@@ -190,6 +199,43 @@ function isImageInput(name: string, prop: Record<string, unknown>, schemaCompone
   return name.endsWith("_image") ||
          name.startsWith("image_") ||
          name.includes("_image_");
+}
+
+/**
+ * Check if property is an audio input based on schema type and name.
+ *
+ * Audio inputs must be strings (URLs or base64) or arrays of strings.
+ */
+function isAudioInput(name: string, prop: Record<string, unknown>, schemaComponents?: Record<string, unknown>): boolean {
+  const resolved = resolvePropertyType(prop, schemaComponents);
+  const propType = resolved.type;
+  if (propType !== "string" && propType !== "array") {
+    return false;
+  }
+
+  // For arrays, check if items are strings
+  if (propType === "array") {
+    const items = prop.items as Record<string, unknown> | undefined;
+    if (items && items.type && items.type !== "string") {
+      return false;
+    }
+  }
+
+  // Check explicit patterns
+  if (AUDIO_INPUT_PATTERNS.includes(name)) {
+    return true;
+  }
+
+  // Check description for audio-related keywords
+  const description = (prop.description as string || "").toLowerCase();
+  if (description.includes("audio url") ||
+      description.includes("audio file") ||
+      description.includes("url of the audio")) {
+    return true;
+  }
+
+  // Check name patterns
+  return name.endsWith("_audio") || name.startsWith("audio_");
 }
 
 /**
@@ -525,8 +571,23 @@ function extractParametersFromSchema(
   const inputs: ModelInput[] = [];
 
   for (const [name, prop] of Object.entries(properties)) {
-    // Check if this is a connectable input (image or text)
-    // Pass both name AND prop to check schema type, not just name
+    // Check if this is a connectable input (audio, image, or text)
+    // Audio is checked first — it matches specific name patterns while image
+    // detection is more permissive (e.g. description heuristics like "data uri"
+    // can false-positive on audio properties).
+    if (isAudioInput(name, prop, schemaComponents)) {
+      const resolvedType = resolvePropertyType(prop, schemaComponents).type;
+      inputs.push({
+        name,
+        type: "audio",
+        required: required.includes(name),
+        label: toLabel(name),
+        description: prop.description as string | undefined,
+        isArray: resolvedType === "array",
+      });
+      continue;
+    }
+
     if (isImageInput(name, prop, schemaComponents)) {
       const resolvedType = resolvePropertyType(prop, schemaComponents).type;
       inputs.push({
@@ -568,10 +629,13 @@ function extractParametersFromSchema(
     return a.name.localeCompare(b.name);
   });
 
-  // Sort inputs: required first, then by type (image before text), then alphabetically
+  // Sort inputs: required first, then by type (image, audio, text), then alphabetically
+  const inputTypeOrder: Record<string, number> = { image: 0, audio: 1, text: 2 };
   inputs.sort((a, b) => {
     if (a.required !== b.required) return a.required ? -1 : 1;
-    if (a.type !== b.type) return a.type === "image" ? -1 : 1;
+    const aOrder = inputTypeOrder[a.type] ?? 3;
+    const bOrder = inputTypeOrder[b.type] ?? 3;
+    if (aOrder !== bOrder) return aOrder - bOrder;
     return a.name.localeCompare(b.name);
   });
 

@@ -155,7 +155,7 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
     case "nanoBanana":
       return { inputs: ["image", "text"], outputs: ["image"] };
     case "generateVideo":
-      return { inputs: ["image", "text"], outputs: ["video"] };
+      return { inputs: ["image", "text", "audio"], outputs: ["video"] };
     case "generate3d":
       return { inputs: ["image", "text"], outputs: ["3d"] };
     case "generateAudio":
@@ -1207,6 +1207,10 @@ export function WorkflowCanvas() {
         } else if (nodeType === "generateAudio") {
           // GenerateAudio outputs audio (no audio input to wire to)
           sourceHandleIdForNewNode = "audio";
+        } else if (nodeType === "generateVideo") {
+          // GenerateVideo accepts audio input and outputs video
+          targetHandleId = "audio";
+          sourceHandleIdForNewNode = "video";
         } else if (nodeType === "videoStitch") {
           // VideoStitch accepts audio
           targetHandleId = "audio";

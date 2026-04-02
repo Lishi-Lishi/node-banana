@@ -18,7 +18,8 @@ export type ModelCapability =
   | "image-to-video"
   | "text-to-3d"
   | "image-to-3d"
-  | "text-to-audio";
+  | "text-to-audio"
+  | "audio-to-video";
 
 /**
  * Model parameter schema for dynamic UI generation
@@ -42,7 +43,7 @@ export interface ModelInput {
   /** Property name from schema (e.g., "image_url", "tail_image_url", "prompt") */
   name: string;
   /** Handle type for connections */
-  type: "image" | "text";
+  type: "image" | "text" | "audio";
   /** Whether this input is required */
   required: boolean;
   /** Human-readable label for the handle */

@@ -226,24 +226,8 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
       {/* Single text output point (each outgoing edge receives a separate item) */}
       <Handle type="source" position={Position.Right} id="text" data-handletype="text" style={{ top: 48 }} />
 
-      {/* Auto-route button - floating absolute positioned */}
-      <button
-        type="button"
-        onClick={handleAutoRouteToPrompts}
-        disabled={previewItems.length === 0}
-        className="nodrag nopan absolute top-2 right-2 z-10 shrink-0 p-1 bg-[#1a1a1a] rounded-md text-neutral-400 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        title="Auto-route to Prompts"
-      >
-        <svg className="w-3.5 h-3.5 rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M16 3h5v5" />
-          <path d="M8 3H3v5" />
-          <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3" />
-          <path d="m15 9 6-6" />
-        </svg>
-      </button>
-
       <div className="flex flex-col gap-2 pt-3 flex-1 min-h-0">
-        <div className="flex items-center gap-2 max-w-[75%]">
+        <div className="flex items-center gap-2">
           <label className="shrink-0 text-[11px] text-neutral-400">Split</label>
           <select
             value={nodeData.splitMode}
@@ -254,6 +238,36 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
             <option value="newline">Newline</option>
             <option value="regex">Regex (Advanced)</option>
           </select>
+          {/* Batch mode toggle */}
+          <button
+            type="button"
+            onClick={() => updateNodeData(id, { batchMode: !nodeData.batchMode })}
+            className={`nodrag nopan shrink-0 py-1 px-2 rounded-md text-[11px] font-medium transition-colors ${
+              nodeData.batchMode
+                ? "bg-blue-600/80 text-blue-100"
+                : "bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300"
+            }`}
+            title={nodeData.batchMode ? "Batch mode: all items sent to one downstream node" : "Enable batch mode"}
+          >
+            Batch
+          </button>
+          {/* Auto-route button (hidden in batch mode) */}
+          {!nodeData.batchMode && (
+            <button
+              type="button"
+              onClick={handleAutoRouteToPrompts}
+              disabled={previewItems.length === 0}
+              className="nodrag nopan shrink-0 py-1 px-1.5 bg-[#1a1a1a] rounded-md text-neutral-400 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Auto-route to Prompts"
+            >
+              <svg className="w-3.5 h-3.5 rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 3h5v5" />
+                <path d="M8 3H3v5" />
+                <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3" />
+                <path d="m15 9 6-6" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {nodeData.splitMode === "delimiter" && (
@@ -352,9 +366,11 @@ export function ArrayNode({ id, data, selected }: NodeProps<ArrayNodeType>) {
           )}
         </div>
         <div className="text-[10px] text-neutral-500">
-          {nodeData.selectedOutputIndex !== null
-            ? `Next wire uses item ${nodeData.selectedOutputIndex + 1}`
-            : "No selection: wires advance in order from item 1"}
+          {nodeData.batchMode
+            ? "Batch: all items sent to downstream node"
+            : nodeData.selectedOutputIndex !== null
+              ? `Next wire uses item ${nodeData.selectedOutputIndex + 1}`
+              : "No selection: wires advance in order from item 1"}
         </div>
       </div>
     </BaseNode>

@@ -54,6 +54,7 @@ const RELEVANT_CATEGORIES = [
   "text-to-speech",
   "text-to-music",
   "text-to-sound-effects",
+  "audio-to-video",
 ];
 
 // Kie.ai models (hardcoded - no discovery API available)

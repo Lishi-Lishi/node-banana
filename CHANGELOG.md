@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-04-02
+
+### Added
+
+- **Audio-to-video generation** — Video generation nodes now accept audio inputs, enabling audio-driven video workflows with handle rendering, connection validation, model discovery, and drop-menu wiring
+- **Array batch mode** — New batch execution mode that sequentially generates from all items in an array, with shared helper logic across all execution entry points
+
+### Fixed
+
+- **Undo/redo memory bloat** — Eliminated excessive memory usage caused by deep-cloning base64 image blobs in history snapshots; clipboard and snapshot operations now use a string-preserving clone
+- **Cancellable batch execution** — Wired AbortController into `regenerateNode` so batch runs can be properly cancelled
+- **Output gallery correctness** — Output gallery now reads fresh node data to preserve all batch-generated images
+- **Array batch behavior** — Batch mode is now derived dynamically from the source node rather than being statically configured
+- **UI polish** — Normalized button sizes in array node headers and repositioned batch/auto-route controls inline with split rows
+
 ## [1.3.0] - 2026-03-31
 
 ### Added
