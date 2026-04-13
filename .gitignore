@@ -50,3 +50,6 @@ logs/*.json
 .agents/
 
 .superset/
+
+# 忽略所有生成的本地直链媒体文件
+public/outputs/

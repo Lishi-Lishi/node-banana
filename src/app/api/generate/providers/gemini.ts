@@ -140,7 +140,9 @@ export async function generateWithGemini(
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      // 👇 新增：强制要求底层 fetch 保持 10 分钟的耐心
+      signal: AbortSignal.timeout(600000)
     });
 
     if (!res.ok) {
